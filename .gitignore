@@ -1,0 +1,6 @@
+DATA/
+RESULTS/
+.*
+!.gitignore
+__pycache__/
+*.svg

@@ -1,4 +1,5 @@
 import os
+from copy import deepcopy
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,7 +8,7 @@ from skopt.space import Real
 from scipy.integrate import trapz
 
 import utils
-from model import InfectiousBase
+from model import InfectiousBase, find_best
 from plot import plot_one_regions
 
 
@@ -197,29 +198,20 @@ class NetSEIR(InfectiousBase):
         else:
             raise ValueError
 
-    def _set_args(self, params, hubei_index):
-        """
-        这里我们假设对于控制参数，湖北地区和其他地区不同
-        """
-        self.alpha_E = self.kwargs["alpha_E"] = params[0]
-        self.alpha_I = self.kwargs["alpha_I"] = params[1]
-        self.protect_args["k"] = self.kwargs["protect_args"]["k"] = params[2:]
-        # self.protect_args["k"] = self.kwargs["protect_args"]["k"] = np.full(
-        #     self.num_regions, params[2])  # 非湖北地区
-        # self.protect_args["k"][hubei_index] = params[3]
-        # self.kwargs["protect_args"]["k"][hubei_index] = params[3]
 
-    def _get_fit_x0(self):
-        if self.fit_method == "scipy-NM":
-            return np.full(4, 0.5)
-        elif self.fit_method == "scikit-optimize":
-            return [Real(0, 1), Real(0, 1), Real(0, 0.5), Real(0, 0.5)]
-        elif self.fit_method in ["scikit-opt", "geaty"]:
-            return [2+self.num_regions, np.zeros(2+self.num_regions),
-                    np.full(2+self.num_regions, 0.5)]
+def set_model(model, params):
+    model.alpha_E = params[0]
+    model.alpha_I = params[1]
+    model.protect_args["k"] = params[2:]
 
-    def save_opt_res(self, save_file):
-        utils.save(self.opt_res, save_file, "pkl")
+
+def score_func(params, model, true_times, true_values):
+    model_copy = deepcopy(model)
+    set_model(model_copy, params)
+    return model_copy.score(true_times, true_values)
+
+    # def save_opt_res(self, save_file):
+    #     utils.save(self.opt_res, save_file, "pkl")
 
 
 if __name__ == "__main__":
@@ -243,7 +235,7 @@ if __name__ == "__main__":
     parser.add_argument("--y0", default=43, type=float,
                         help="武汉或湖北在t0那天的感染人数")
     parser.add_argument("--tm", default="2020-02-29", help="需要预测到哪天")
-    parser.add_argument("--alpha_E", default=0.15, type=float)
+    parser.add_argument("--alpha_E", default=0.0, type=float)
     parser.add_argument("--alpha_I", default=0.15, type=float)
     parser.add_argument("--De", default=3, type=float)
     parser.add_argument("--Di", default=14, type=float)
@@ -310,7 +302,7 @@ if __name__ == "__main__":
             args.alpha_I, args.alpha_E, protect=True,
             num_people=dats["population"],
             protect_args={"t0": protect_t0_relative, "k": args.protect_k},
-            fit_method="geaty", score_type=args.fit_score
+            score_type=args.fit_score
         )
         if args.model == "fit":
             # 首先找到我们使用的预测数据，这里不使用湖北的数据，不使用前期的数据，而使用
@@ -321,10 +313,21 @@ if __name__ == "__main__":
                 dats["epidemic_t0"]
             use_fit_data_time = epi_times_relative[use_fit_data_start:]
             use_fit_data_epid = dats["epidemic"][use_fit_data_start:]
-            model.fit(use_fit_data_time, use_fit_data_epid, mask=None,
-                      hubei_index=hb_wh_index)
+            # 设置搜索条件
+            x0 = [
+                2 + num_regions,
+                np.zeros(2 + num_regions),
+                np.full(2 + num_regions, 0.5)
+            ]
+            # 搜索
+            best_x, opt_res = find_best(
+                lambda x: score_func(
+                    x, model, use_fit_data_time, use_fit_data_epid
+                ), x0, "geatpy"
+            )
+            set_model(model, best_x)
             model.save(os.path.join(save_dir, "model.pkl"))
-            model.save(os.path.join(save_dir, "opt_res.pkl"))
+            utils.save(opt_res, os.path.join(save_dir, "opt_res.pkl"), "pkl")
     # 预测结果
     _, pred_EE_prot, pred_II_prot = model.predict(pred_times_relative)
     model.protect = False
@@ -363,7 +366,7 @@ if __name__ == "__main__":
         plot_regions = [(dats["regions"].index(reg), reg)
                         for reg in plot_regions]
     # 绘制每个地区的图片，并保存
-    plt.rcParams['font.sans-serif'] = ['SimHei']
+    # plt.rcParams['font.sans-serif'] = ['SimHei']
     for i, reg in plot_regions:
         fig, axes = plt.subplots(1, 2, figsize=(15, 5))
         print("%d: %s" % (i, reg))

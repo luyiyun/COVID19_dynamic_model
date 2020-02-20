@@ -1,5 +1,6 @@
 import numpy as np
 import geatpy as ea
+from pathos.multiprocessing import Pool, cpu_count
 
 
 """
@@ -31,17 +32,23 @@ class MyProblem(ea.Problem):  # 继承Problem父类
         lbin = [1] * Dim
         # 决策变量上边界（0表示不包含该变量的上边界，1表示包含）
         ubin = [1] * Dim
+        # 多进程
+        self.pool = Pool(int(cpu_count()))
         # 调用父类构造方法完成实例化
         ea.Problem.__init__(
             self, name, M, maxormins, Dim, varTypes, lb, ub, lbin, ubin)
 
     def aimFunc(self, pop):  # 目标函数
         x = pop.Phen  # 得到决策变量矩阵
-        Objv = []
-        for i in range(x.shape[0]):
-            Objv.append(self.func(x[i, :]))
+        results = self.pool.map_async(self.func, list(x))
+        # for i in range(x.shape[0]):
+        #     results.append(self.pool.apply_async(self.func, args=(x[i, :],)))
+        # self.pool.close()
+        # self.pool.join()
+        # results = [res.get() for res in results]
+        results.wait()
         # 计算目标函数值，赋值给pop种群对象的ObjV属性
-        pop.ObjV = np.array([Objv]).T
+        pop.ObjV = np.array([results.get()]).T
 
 
 def geaty_func(func, dim, lb, ub, Encoding="BG", NIND=400, MAXGEN=25):

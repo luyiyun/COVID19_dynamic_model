@@ -62,20 +62,12 @@ class InfectiousBase:
         返回的是ndarray, dim = len(times) * len(vars)
         注意，这里得到的是所有预测值，一般来说，还需要在子类中对其进行进一步的封装
         """
-        # import ipdb; ipdb.set_trace()
-        # t = np.r_[0, times]
         t_span = (0, times.max())
         results = integrate.solve_ivp(
             self, t_span=t_span, y0=self.y0,
-            t_eval=times,
-            # t_eval=times,
-            rtol=self.rtol, atol=self.atol)
-        # results = integrate.odeint(
-        #     self, self.y0, t, tfirst=True, rtol=self.rtol, atol=self.atol,
-        #     full_output=True
-        # )
+            t_eval=times, rtol=self.rtol, atol=self.atol
+        )
         return results.y.T
-        # return results[0][1:, :]
 
     @property
     def R(self):

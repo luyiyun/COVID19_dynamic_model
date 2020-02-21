@@ -34,6 +34,8 @@ class MyProblem(ea.Problem):  # 继承Problem父类
         ubin = [1] * Dim
         # 多进程
         self.pool = Pool(int(cpu_count()))
+        # 可视化
+        self.count = 0
         # 调用父类构造方法完成实例化
         ea.Problem.__init__(
             self, name, M, maxormins, Dim, varTypes, lb, ub, lbin, ubin)
@@ -49,6 +51,8 @@ class MyProblem(ea.Problem):  # 继承Problem父类
         results.wait()
         # 计算目标函数值，赋值给pop种群对象的ObjV属性
         pop.ObjV = np.array([results.get()]).T
+        self.count += 1
+        print("第%d代完成" % self.count)
 
 
 def geaty_func(func, dim, lb, ub, Encoding="BG", NIND=400, MAXGEN=25):

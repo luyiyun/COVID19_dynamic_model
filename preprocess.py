@@ -3,6 +3,7 @@ import sys
 import pickle
 from dateutil.parser import parse
 
+import numpy as np
 import pandas as pd
 
 import utils
@@ -313,8 +314,9 @@ def preprocess_provinces():
     )
     pmn_arrs = {}
     for d in set(pmn.time):
-        pmn_arrs[d] = utils.df_to_mat(pmn[pmn.time == d],
+        mat = utils.df_to_mat(pmn[pmn.time == d],
                                       (len(common), len(common)))
+        pmn_arrs[d] = mat  # 对于省份来时，这里没有遗漏的
 
     all_dat = {
         "epidemic_t0": epi_t0,

@@ -2,9 +2,9 @@ import os
 from copy import deepcopy
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from argparse import ArgumentParser
-from skopt.space import Real
 from scipy.integrate import trapz
 
 import utils
@@ -66,7 +66,9 @@ class GammaFunc:
         # return 0.1255
         if ord_time < self.protect_t0:
             return 0.1255
-        return 0.03
+        elif ord_time < self.protect_t0 + 3:
+            return 0.1255 / 3 * (self.protect_t0 + 3 - ord_time)
+        return 0.0
 
 
 class NetSEIR(InfectiousBase):
@@ -200,9 +202,9 @@ class NetSEIR(InfectiousBase):
 
 
 def set_model(model, params):
-    model.alpha_E = params[0]
-    model.alpha_I = params[1]
-    model.protect_args["k"] = params[2:]
+    model.alpha_E = model.kwargs["alpha_E"] = params[0]
+    model.alpha_I = model.kwargs["alpha_I"] = params[1]
+    model.protect_args["k"] = model.kwargs["protect_args"]["k"] = params[2:]
 
 
 def score_func(params, model, true_times, true_values):
@@ -234,7 +236,7 @@ if __name__ == "__main__":
     parser.add_argument("--t0", default="2019-12-31", help="疫情开始的那天")
     parser.add_argument("--y0", default=43, type=float,
                         help="武汉或湖北在t0那天的感染人数")
-    parser.add_argument("--tm", default="2020-02-29", help="需要预测到哪天")
+    parser.add_argument("--tm", default="2020-03-31", help="需要预测到哪天")
     parser.add_argument("--alpha_E", default=0.0, type=float)
     parser.add_argument("--alpha_I", default=0.15, type=float)
     parser.add_argument("--De", default=3, type=float)
@@ -317,7 +319,7 @@ if __name__ == "__main__":
             x0 = [
                 2 + num_regions,
                 np.zeros(2 + num_regions),
-                np.full(2 + num_regions, 0.5)
+                np.r_[1, 1, np.full(num_regions, 0.5)]
             ]
             # 搜索
             best_x, opt_res = find_best(
@@ -325,6 +327,15 @@ if __name__ == "__main__":
                     x, model, use_fit_data_time, use_fit_data_epid
                 ), x0, "geatpy"
             )
+            # 把k整理成dataframe，然后打印一下
+            dfk = pd.DataFrame(
+                dict(
+                    region=["alpha_E", "alpha_I"] + dats["regions"],
+                    k=opt_res["BestParam"]
+                )
+            )
+            print(dfk)
+            # 将得到的最优参数设置到模型中，并保存
             set_model(model, best_x)
             model.save(os.path.join(save_dir, "model.pkl"))
             utils.save(opt_res, os.path.join(save_dir, "opt_res.pkl"), "pkl")
@@ -366,9 +377,16 @@ if __name__ == "__main__":
         plot_regions = [(dats["regions"].index(reg), reg)
                         for reg in plot_regions]
     # 绘制每个地区的图片，并保存
-    # plt.rcParams['font.sans-serif'] = ['SimHei']
+    if not os.path.exists(os.path.join(save_dir, "part1")):
+        os.mkdir(os.path.join(save_dir, "part1"))
+    if not os.path.exists(os.path.join(save_dir, "part2")):
+        os.mkdir(os.path.join(save_dir, "part2"))
+    plt.rcParams['font.sans-serif'] = ['SimHei']
+    time_mask = np.isin(pred_times_relative, epi_times_relative)
     for i, reg in plot_regions:
-        fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+        # 其中一部分
+        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+        axes = axes.flatten()
         print("%d: %s" % (i, reg))
         plot_one_regions(
             axes[0], pred_times_relative, epi_times_relative,
@@ -380,4 +398,27 @@ if __name__ == "__main__":
             pred_EE_prot[:, i], pred_II_prot[:, i], dats["epidemic"][:, i],
             reg+" protect", t0_ord=t0
         )
-        fig.savefig(os.path.join(save_dir, "%s.png" % reg))
+        plot_one_regions(
+            axes[2], epi_times_relative, epi_times_relative,
+            pred_EE_prot[time_mask, i], pred_II_nopr[time_mask, i],
+            dats["epidemic"][:, i], reg+" no protect part", t0_ord=t0
+        )
+        fig.savefig(os.path.join(save_dir, "part1/%s.png" % reg))
+        plt.close(fig)
+        # 另一部分
+        fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+        axes = axes.flatten()
+        print("%d: %s" % (i, reg))
+        plot_one_regions(
+            axes[0], pred_times_relative, epi_times_relative,
+            pred_EE_nopr[:, i], pred_II_nopr[:, i], dats["epidemic"][:, i],
+            reg+" no protect", t0_ord=t0
+        )
+        plot_one_regions(
+            axes[1], epi_times_relative, epi_times_relative,
+            pred_EE_prot[time_mask, i], pred_II_nopr[time_mask, i],
+            dats["epidemic"][:, i], reg+" no protect part", t0_ord=t0
+        )
+        fig.savefig(os.path.join(save_dir, "part2/%s.png" % reg))
+        plt.close(fig)
+

@@ -116,7 +116,7 @@ def find_best(score_func, x0, fit_method="geatpy"):
 
 def NM_callback(self, Xi):
     global _fit_count
-    if fit_count == 0:
+    if _fit_count == 0:
         print("%4s   %9s   %9s   %9s" % ("Iter", "alpha_E", "alpha_I", "k"))
     print(
         "%4d   %3.6f   %3.6f   %3.6f" %

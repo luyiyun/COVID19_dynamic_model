@@ -23,7 +23,7 @@ class MyProblem(ea.Problem):  # 继承Problem父类
         # 初始化Dim（决策变量维数）
         Dim = dim
         # 初始化varTypes（决策变量的类型，元素为0表示对应的变量是连续的；1表示是离散的）
-        varTypes = [0] * Dim
+        varTypes = [0] * 2 + [1] * 31 + [0] * 31  # [0] * Dim
         # 决策变量下界
         # lb = [0] * Dim
         # 决策变量上界
@@ -55,7 +55,9 @@ class MyProblem(ea.Problem):  # 继承Problem父类
         print("第%d代完成" % self.count)
 
 
-def geaty_func(func, dim, lb, ub, Encoding="BG", NIND=400, MAXGEN=25):
+def geaty_func(
+    func, dim, lb, ub, Encoding="BG", NIND=400, MAXGEN=25
+):
     """
     Encoding 编码方式
     NIND 种群规模

@@ -177,9 +177,9 @@ class NetSEIR(InfectiousBase):
 
     @staticmethod
     def protect_decay(t, t0, k):
-        if t <= t0:
-            return 1
-        return np.exp(-k * (t - t0))
+        mask1 = (t - t0) <= 0
+        mask2 = 1 - mask1
+        return np.exp(-k * (t - t0)) * mask2 + mask1
 
     @staticmethod
     def protect_decay1(t, t0, k):
@@ -201,15 +201,20 @@ class NetSEIR(InfectiousBase):
             raise ValueError
 
 
-def set_model(model, params):
+def set_model(model, params, protect_t0_relative):
+    num = params.shape[0]
+    num_regions = (num - 2) // 2
     model.alpha_E = model.kwargs["alpha_E"] = params[0]
     model.alpha_I = model.kwargs["alpha_I"] = params[1]
-    model.protect_args["k"] = model.kwargs["protect_args"]["k"] = params[2:]
+    model.protect_t0 = model.kwargs["protect_t0"] = \
+        params[2: (2+num_regions)] + protect_t0_relative
+    model.protect_args["k"] = model.kwargs["protect_args"]["k"] = \
+        params[(2+num_regions):]
 
 
-def score_func(params, model, true_times, true_values):
+def score_func(params, model, true_times, true_values, protect_t0_relative):
     model_copy = deepcopy(model)
-    set_model(model_copy, params)
+    set_model(model_copy, params, protect_t0_relative)
     return model_copy.score(true_times, true_values)
 
     # def save_opt_res(self, save_file):
@@ -317,28 +322,32 @@ if __name__ == "__main__":
             use_fit_data_epid = dats["epidemic"][use_fit_data_start:]
             # 设置搜索条件
             x0 = [
-                2 + num_regions,
-                np.zeros(2 + num_regions),
-                np.r_[1, 1, np.full(num_regions, 0.5)]
+                2 + 2*num_regions,
+                np.zeros(2 + 2*num_regions),
+                np.r_[1, 1, np.full(num_regions, 30),
+                      np.full(num_regions, 0.5)]
             ]
             # 搜索
             best_x, opt_res = find_best(
                 lambda x: score_func(
-                    x, model, use_fit_data_time, use_fit_data_epid
+                    x, model, use_fit_data_time, use_fit_data_epid,
+                    protect_t0_relative
                 ), x0, "geatpy"
             )
+            # 将得到的最优参数设置到模型中，并保存
+            set_model(model, best_x, protect_t0_relative)
+            model.save(os.path.join(save_dir, "model.pkl"))
+            utils.save(opt_res, os.path.join(save_dir, "opt_res.pkl"), "pkl")
             # 把k整理成dataframe，然后打印一下
+            region_name = ["alpha_E", "alpha_I"] + \
+                dats["regions"] * 2
             dfk = pd.DataFrame(
                 dict(
-                    region=["alpha_E", "alpha_I"] + dats["regions"],
+                    region=region_name,
                     k=opt_res["BestParam"]
                 )
             )
             print(dfk)
-            # 将得到的最优参数设置到模型中，并保存
-            set_model(model, best_x)
-            model.save(os.path.join(save_dir, "model.pkl"))
-            utils.save(opt_res, os.path.join(save_dir, "opt_res.pkl"), "pkl")
     # 预测结果
     _, pred_EE_prot, pred_II_prot = model.predict(pred_times_relative)
     model.protect = False
@@ -421,4 +430,3 @@ if __name__ == "__main__":
         )
         fig.savefig(os.path.join(save_dir, "part2/%s.png" % reg))
         plt.close(fig)
-

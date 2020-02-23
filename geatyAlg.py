@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import geatpy as ea
 from pathos.multiprocessing import Pool, cpu_count
@@ -55,7 +57,36 @@ class MyProblem(ea.Problem):  # 继承Problem父类
         print("第%d代完成" % self.count)
 
 
-def geaty_func(func, dim, lb, ub, Encoding="BG", NIND=400, MAXGEN=25):
+class MyAlgorithm(ea.soea_SEGA_templet):
+    def __init__(self, problem, population, fig_dir):
+        self.fig_dir = fig_dir
+        super().__init__(problem, population)
+
+    def finishing(self, population):
+        # 处理进化记录器
+        delIdx = np.where(np.isnan(self.obj_trace))[0]
+        self.obj_trace = np.delete(self.obj_trace, delIdx, 0)
+        self.var_trace = np.delete(self.var_trace, delIdx, 0)
+        if self.obj_trace.shape[0] == 0:
+            raise RuntimeError(
+                'error: No feasible solution. (有效进化代数为0，没找到可行解。)')
+        self.passTime += time.time() - self.timeSlot  # 更新用时记录
+        # 绘图
+        if self.drawing != 0:
+            ea.trcplot(
+                self.obj_trace,
+                [['种群个体平均目标函数值', '种群最优个体目标函数值']],
+                save_path=self.fig_dir,
+                xlabels=[['Number of Generation']],
+                ylabels=[['Value']], gridFlags=[[False]]
+            )
+        # 返回最后一代种群、进化记录器、变量记录器以及执行时间
+        return [population, self.obj_trace, self.var_trace]
+
+
+def geaty_func(
+    func, dim, lb, ub, Encoding="BG", NIND=400, MAXGEN=25, fig_dir=""
+):
     """
     Encoding 编码方式
     NIND 种群规模
@@ -75,9 +106,11 @@ def geaty_func(func, dim, lb, ub, Encoding="BG", NIND=400, MAXGEN=25):
 
     """ 算法参数设置 """
     # 实例化一个算法模板对象
-    myAlgorithm = ea.soea_SEGA_templet(problem, population)
+    myAlgorithm = MyAlgorithm(problem, population, fig_dir)
     # 最大进化代数
     myAlgorithm.MAXGEN = MAXGEN
+    # 控制是否绘制图片
+    myAlgorithm.drawing = 1
 
     """ 调用算法模板进行种群进化 """
     [population, obj_trace, var_trace] = myAlgorithm.run()  # 执行算法模板

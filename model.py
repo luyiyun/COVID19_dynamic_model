@@ -86,7 +86,7 @@ class InfectiousBase:
         return cls(**configs)
 
 
-def find_best(score_func, x0, fit_method="geatpy"):
+def find_best(score_func, x0, fit_method="geatpy", save_dir=""):
     # 根据不同的方法进行拟合参数
     if fit_method == "scipy-NM":
         opt_res = optimize.minimize(
@@ -108,7 +108,7 @@ def find_best(score_func, x0, fit_method="geatpy"):
     elif fit_method == "geatpy":
         opt_res = geaty_func(
             score_func, x0[0], x0[1], x0[2],
-            NIND=400, MAXGEN=25
+            NIND=800, MAXGEN=25, fig_dir=save_dir
         )
         best_x = opt_res["BestParam"]
     return best_x, opt_res
@@ -116,7 +116,7 @@ def find_best(score_func, x0, fit_method="geatpy"):
 
 def NM_callback(self, Xi):
     global _fit_count
-    if fit_count == 0:
+    if _fit_count == 0:
         print("%4s   %9s   %9s   %9s" % ("Iter", "alpha_E", "alpha_I", "k"))
     print(
         "%4d   %3.6f   %3.6f   %3.6f" %

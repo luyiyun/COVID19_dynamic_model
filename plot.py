@@ -3,7 +3,7 @@ from datetime import date
 
 def plot_one_regions(
     ax, pred_times, true_times, pred_E, pred_I, true_I, region_name,
-    t0_ord=None
+    t0_ord=None, use_log=False
 ):
     """
     将E和I、还有真实的感染人数绘制到一个axe上
@@ -13,6 +13,8 @@ def plot_one_regions(
     # ax.plot(pred_times, pred_E, "-y", label="predict")
     ax.plot(pred_times, pred_I, "-r", label="predict")
     ax.plot(true_times, true_I, "or", label="true")
+    if use_log:
+        ax.set_yscale("log")
     if t0_ord is not None:
         tick_time = [t for t in pred_times if t % 5 == 0]
         tick_times_ord = [t+t0_ord for t in tick_time]

@@ -251,8 +251,8 @@ def preprocess_provinces_epidemic():
     # 整理省的名称
     epidemic_dat.loc[:, "region"] = province_remove_end(epidemic_dat.region)
     # 整理values
-    epidemic_dat["value"] = epidemic_dat.iloc[:, 1] - \
-        epidemic_dat.iloc[:, 2] - epidemic_dat.iloc[:, 3]
+    epidemic_dat["value"] = epidemic_dat.iloc[:, 1]
+    # - epidemic_dat.iloc[:, 2] - epidemic_dat.iloc[:, 3]
     # 整理时间
     #   将出现疫情最早的那一天看做t0，并将时间进行整理，全部转换成ordinal格式
     epidemic_dat.loc[:, "time"] = epidemic_dat.time.map(
@@ -262,7 +262,7 @@ def preprocess_provinces_epidemic():
 
 def preprocess_provinces_population():
     # 读取数据
-    population_dat = pd.read_csv("./DATA/Original/Provinces_population.csv")
+    population_dat = pd.read_csv("./DATA/Original/Provinces_population18.csv")
     population_dat.rename(
         columns={"provinces": "region", "people": "population"}, inplace=True
     )
@@ -270,14 +270,48 @@ def preprocess_provinces_population():
     return population_dat
 
 
+def preprocesss_provinces_first_time():
+
+    def parse_time(t):
+        if isinstance(t, float):
+            return np.nan
+        t = "2020-0" + t.replace("月", "-").replace("日", "")
+        return utils.time_str2ord(t)
+
+    response_time = pd.read_csv(
+        "./DATA/Original/ResponseTimeProvince.csv", header=None).iloc[:, :2]
+    response_time.columns = ["region", "time"]
+    response_time.loc[:, "time"] = response_time.time.map(parse_time)
+    response_time.set_index("region", inplace=True)
+
+    first_case = pd.read_csv("./DATA/Original/FirstProvince.csv", header=None)
+    first_case.columns = ["region", "time"]
+    first_case.loc[:, "time"] = first_case.time.map(parse_time)
+    first_case.set_index("region", inplace=True)
+
+    return response_time.time, first_case.time
+
+
+def preprocess_provinces_outtrend():
+    df = pd.read_csv("./DATA/Original/out_trend.csv")
+    df = df.iloc[:, 1:]
+    df.loc[:, "year19"] = df.year19 / 100
+    df.loc[:, "year20"] = df.year20 / 100
+    return df
+
+
 def preprocess_provinces():
     # 得到整理后的各个部分的数据
-    print("开始preprocess_cities_pmn")
+    print("开始preprocess_provinces_pmn")
     pmn, regions = preprocess_provinces_pmn()
-    print("开始preprocess_cities_epidemic")
+    print("开始preprocess_provinces_epidemic")
     epidemic = preprocess_provinces_epidemic()
-    print("开始preprocess_cities_population")
+    print("开始preprocess_provinces_population")
     population = preprocess_provinces_population()
+    print("开始preprocess_provinces_first_time")
+    response_time, first_case = preprocesss_provinces_first_time()
+    print("开始preprocess_provinces_outtrend")
+    out_trend = preprocess_provinces_outtrend()
 
     # 将这些数据进行整合，取出三部分都有的地区
     set1, set2, set3 = (set(regions), set(epidemic.region),
@@ -298,6 +332,7 @@ def preprocess_provinces():
     prov_map = {prov: i for i, prov in enumerate(common)}
     pmn.replace(prov_map, inplace=True)
     epidemic.replace(prov_map, inplace=True)
+    out_trend.replace(prov_map, inplace=True)
 
     # 因为要把时间作为array的一个轴，需要使用sparse to dense的技术来转换，这需要时间必须是
     #   从0开始，所以这里先把epidemic的时间进行调整，注意，这里进行记录0时间点的具体的ord
@@ -314,16 +349,34 @@ def preprocess_provinces():
     )
     pmn_arrs = {}
     for d in set(pmn.time):
-        mat = utils.df_to_mat(pmn[pmn.time == d],
-                                      (len(common), len(common)))
+        mat = utils.df_to_mat(pmn[pmn.time == d], (len(common), len(common)))
         pmn_arrs[d] = mat  # 对于省份来时，这里没有遗漏的
+
+    # 对out trend进行整理
+    out_trend_t0 = out_trend.time.min()
+    out_trend.loc[:, "time"] = out_trend.time - out_trend_t0
+    out_trend20_df = out_trend[~out_trend.year20.isna()]
+    out_trend20 = utils.df_to_mat(
+        out_trend20_df,
+        (out_trend20_df.time.max()+1, len(common)),
+        source="time", target="region", values="year20"
+    )
+    out_trend19 = utils.df_to_mat(
+        out_trend, (out_trend.time.max()+1, len(common)),
+        source="time", target="region", values="year19"
+    )
 
     all_dat = {
         "epidemic_t0": epi_t0,
+        "out_trend_t0": out_trend_t0,
         "epidemic": epidemic_arr,
         "regions": common,
         "population": population_arr,
         "pmn": pmn_arrs,
+        "response_time": response_time.loc[common].values,
+        "first_case": first_case.loc[common].values,
+        "out_trend20": out_trend20,
+        "out_trend19": out_trend19
     }
     with open("./DATA/Provinces.pkl", "wb") as f:
         pickle.dump(all_dat, f)

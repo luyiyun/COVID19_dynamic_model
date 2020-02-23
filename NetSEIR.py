@@ -11,64 +11,7 @@ import utils
 from model import InfectiousBase, find_best
 from plot import plot_one_regions
 
-
-class PmnFunc:
-    """
-    得到Pmn关于t的函数。
-    即得到每个时间点上的人口流动比例
-    """
-    def __init__(self, pmn, use_mean=False):
-        """
-        pmn是一个dict，其key是date属性，记录的是哪一天，其value是一个ndarray的
-        matrix，其第mn个元素表示的是第m个地区迁徙到第n个地区的人口占所有迁出m地区人口
-        的比例
-        """
-        self.pmn = pmn
-        self.use_mean = use_mean
-        if self.use_mean:
-            vv, counts = 0, 0
-            for v in self.pmn.values():
-                vv += v
-                counts += 1
-            self.pmn_mean = vv / counts
-        else:
-            self.pmn_times = list(self.pmn.keys())
-            self.pmn_times_min, self.pmn_times_max = \
-                min(self.pmn_times), max(self.pmn_times)
-
-    def __call__(self, ord_time):
-        """
-        ord_time，相对于t0的相对计时，比如，t0那一天就是0，其后一天是1.
-        """
-        if self.use_mean:
-            return self.pmn_mean
-        if ord_time <= self.pmn_times_min:
-            return self.pmn[self.pmn_times_min]
-        elif ord_time >= self.pmn_times_max:
-            return self.pmn[self.pmn_times_max]
-        else:
-            ord_time_int = int(ord_time)
-            diff = self.pmn[ord_time_int+1] - self.pmn[ord_time_int]
-            result = self.pmn[ord_time_int] + diff * (ord_time - ord_time_int)
-        return result
-
-
-class GammaFunc:
-    def __init__(self, protect_t0):
-        """ 所有城市移动人口占全国总人口的比例，暂时设为一个常数值 """
-        self.protect_t0 = protect_t0
-
-    def __call__(self, ord_time):
-        """ 相对计时，相对于start day的计时，在start_day=0 """
-        # ratio = NetSEIR.protect_decay(
-        #     ord_time, self.protect_t0, 0.9, self.protect_tm)
-        # return 0.1255 * ratio
-        # return 0.1255
-        if ord_time < self.protect_t0:
-            return 0.1255
-        elif ord_time < self.protect_t0 + 3:
-            return 0.1255 / 3 * (self.protect_t0 + 3 - ord_time)
-        return 0.0
+from widgets import GammaFunc, PmnFunc
 
 
 class NetSEIR(InfectiousBase):
@@ -177,9 +120,8 @@ class NetSEIR(InfectiousBase):
 
     @staticmethod
     def protect_decay(t, t0, k):
-        if t <= t0:
-            return 1
-        return np.exp(-k * (t - t0))
+        le_bool = t <= t0
+        return le_bool + (1 - le_bool) * np.exp(-k * (t - t0))
 
     @staticmethod
     def protect_decay1(t, t0, k):
@@ -200,6 +142,25 @@ class NetSEIR(InfectiousBase):
         else:
             raise ValueError
 
+    def R0(self, ts):
+        FVs = []
+        for t in ts:
+            pmnt = self.Pmn_func(t)
+            gammat = self.gamma_func(t)
+
+            A = np.diag(np.full(self.num_regions, self.theta - gammat))
+            A = A - pmnt.T
+            A = np.linalg.inv(A)
+            B = np.diag(np.full(self.num_regions, self.beta - gammat))
+            B = B - pmnt.T
+            B = np.linalg.pinv(B)
+            AB = np.matmul(A, B)
+            FV_1 = self.alpha_E * A + self.alpha_I * self.theta * AB
+            FVs.append(FV_1)
+        FVs = np.stack(FVs)
+        eigs, _ = np.linalg.eig(FVs)
+        return abs(eigs).max(axis=1)
+
 
 def set_model(model, params):
     model.alpha_E = model.kwargs["alpha_E"] = params[0]
@@ -207,10 +168,10 @@ def set_model(model, params):
     model.protect_args["k"] = model.kwargs["protect_args"]["k"] = params[2:]
 
 
-def score_func(params, model, true_times, true_values):
+def score_func(params, model, true_times, true_values, mask=None):
     model_copy = deepcopy(model)
     set_model(model_copy, params)
-    return model_copy.score(true_times, true_values)
+    return model_copy.score(true_times, true_values, mask=None)
 
     # def save_opt_res(self, save_file):
     #     utils.save(self.opt_res, save_file, "pkl")
@@ -234,9 +195,10 @@ if __name__ == "__main__":
               "的地区名。如果是all，则将所有的都计算一下看看")
     )
     parser.add_argument("--t0", default="2019-12-31", help="疫情开始的那天")
-    parser.add_argument("--y0", default=43, type=float,
+    parser.add_argument("--y0", default=100, type=float,
                         help="武汉或湖北在t0那天的感染人数")
     parser.add_argument("--tm", default="2020-03-31", help="需要预测到哪天")
+    # =0并且不进行训练，则模型认为潜伏期没有传染性
     parser.add_argument("--alpha_E", default=0.0, type=float)
     parser.add_argument("--alpha_I", default=0.15, type=float)
     parser.add_argument("--De", default=3, type=float)
@@ -262,7 +224,6 @@ if __name__ == "__main__":
                             "浙江", "河南", "山东", "黑龙江"]
     else:
         plot_regions = args.regions
-    protect_t0_relative = utils.time_str2diff(args.protect_t0, args.t0)
     tm_relative = utils.time_str2diff(args.tm, args.t0)
     # 保存args到路径中
     utils.save(args.__dict__, os.path.join(save_dir, "args.json"), "json")
@@ -273,27 +234,41 @@ if __name__ == "__main__":
     else:
         dat_file = "./DATA/Provinces.pkl"
     dats = utils.load(dat_file, "pkl")
-    # 时间调整，我们记录的数据都是以ordinal格式记录，但输入模型中需要以相对格式输入，
-    #   其中t0是0
-    t0 = utils.time_str2ord(args.t0)
-    epi_t0_relative = dats["epidemic_t0"] - t0
-    pmn_matrix_relative = {(k-t0): v for k, v in dats["pmn"].items()}
-    epi_times_relative = np.arange(
+
+    # 时间调整(我们记录的数据都是以ordinal格式记录，但输入模型中需要以相对格式输入,其中t0是0)
+    t0 = utils.time_str2ord(args.t0)  # 疫情开始时间
+    # protect_t0_relative = dats["response_time"] - t0  # 防控开始时间
+    protect_t0_relative = utils.time_str2diff(args.protect_t0, args.t0)
+    epi_t0_relative = dats["epidemic_t0"] - t0  # 第一个确诊病例出现的时间
+    pmn_matrix_relative = {(k-t0): v for k, v in dats["pmn"].items()}  # pmn的时间
+    epi_times_relative = np.arange(  # 确诊病例时间
         epi_t0_relative, epi_t0_relative + dats["epidemic"].shape[0]
     )
-    pred_times_relative = np.arange(0, tm_relative)
+    pred_times_relative = np.arange(0, tm_relative)  # 要预测的时间
+    out_trend20_times_relative = np.arange(  # 迁出趋势的时间
+        dats["out_trend_t0"]-t0,
+        dats["out_trend_t0"]-t0+dats["out_trend20"].shape[0]
+    )
+
+    # 将迁出趋势也整理成和pmn一样的dict
+    out_trend20_dict = {}
+    for i, t in enumerate(out_trend20_times_relative):
+        out_trend20_dict[t] = dats["out_trend20"][i, :]
+
+    # 得到湖北或武汉其在regions列表中的位置
     if args.region_type == "city":
         hb_wh_index = dats["regions"].index("武汉")
     else:
         hb_wh_index = dats["regions"].index("湖北")
 
-    """ 构建、或读取、或训练模型 """
-    # 先构造y0
+    # 构造y0
     num_regions = len(dats["regions"])
     y0 = np.zeros(num_regions)
     y0[hb_wh_index] = args.y0
     y0 = y0 / dats["population"]
     y0 = np.r_[np.ones(num_regions), np.zeros(num_regions), y0]
+
+    """ 构建、或读取、或训练模型 """
     # 根据不同的情况来得到合适的模型
     if args.model is not None and args.model != "fit":
         model = NetSEIR.load(args.model)
@@ -309,8 +284,8 @@ if __name__ == "__main__":
         if args.model == "fit":
             # 首先找到我们使用的预测数据，这里不使用湖北的数据，不使用前期的数据，而使用
             #   使用后面的数据
-            # mask = np.full(num_regions, True, dtype=np.bool)
-            # mask[hb_wh_index] = False
+            mask = np.full(num_regions, True, dtype=np.bool)
+            mask[hb_wh_index] = False
             use_fit_data_start = utils.time_str2ord(args.fit_time_start) - \
                 dats["epidemic_t0"]
             use_fit_data_time = epi_times_relative[use_fit_data_start:]
@@ -319,13 +294,13 @@ if __name__ == "__main__":
             x0 = [
                 2 + num_regions,
                 np.zeros(2 + num_regions),
-                np.r_[1, 1, np.full(num_regions, 0.5)]
+                np.r_[0.5, 0.5, np.full(num_regions, 0.5)]
             ]
             # 搜索
             best_x, opt_res = find_best(
                 lambda x: score_func(
-                    x, model, use_fit_data_time, use_fit_data_epid
-                ), x0, "geatpy"
+                    x, model, use_fit_data_time, use_fit_data_epid, mask
+                ), x0, "geatpy", save_dir + "/"
             )
             # 把k整理成dataframe，然后打印一下
             dfk = pd.DataFrame(
@@ -345,6 +320,12 @@ if __name__ == "__main__":
     _, pred_EE_nopr, pred_II_nopr = model.predict(pred_times_relative)
 
     """ 计算相关指标以及绘制图像 """
+    # 预测R0
+    R0s = model.R0(pred_times_relative)
+    fig, ax = plt.subplots(1, 1, figsize=(5, 5))
+    ax.plot(pred_times_relative, R0s)
+    fig.savefig(os.path.join(save_dir, "R0.png"))
+    plt.close(fig)
     # 首先把相关结果数据都汇集
     results = {
         "pred_times": pred_times_relative + t0,
@@ -401,7 +382,8 @@ if __name__ == "__main__":
         plot_one_regions(
             axes[2], epi_times_relative, epi_times_relative,
             pred_EE_prot[time_mask, i], pred_II_nopr[time_mask, i],
-            dats["epidemic"][:, i], reg+" no protect part", t0_ord=t0
+            dats["epidemic"][:, i], reg+" no protect part", t0_ord=t0,
+            use_log=True
         )
         fig.savefig(os.path.join(save_dir, "part1/%s.png" % reg))
         plt.close(fig)
@@ -417,7 +399,8 @@ if __name__ == "__main__":
         plot_one_regions(
             axes[1], epi_times_relative, epi_times_relative,
             pred_EE_prot[time_mask, i], pred_II_nopr[time_mask, i],
-            dats["epidemic"][:, i], reg+" no protect part", t0_ord=t0
+            dats["epidemic"][:, i], reg+" no protect part", t0_ord=t0,
+            use_log=True
         )
         fig.savefig(os.path.join(save_dir, "part2/%s.png" % reg))
         plt.close(fig)

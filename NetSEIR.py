@@ -8,7 +8,8 @@ from argparse import ArgumentParser
 from scipy.integrate import trapz
 
 import utils
-from model import InfectiousBase, find_best
+from model import InfectiousBase
+from geatyAlg import geaty_func
 from plot import plot_one_regions
 
 from widgets import GammaFunc, PmnFunc
@@ -16,9 +17,9 @@ from widgets import GammaFunc, PmnFunc
 
 class NetSEIR(InfectiousBase):
     def __init__(
-        self, De, Di, y0, gamma_func_args, Pmn_func_args, alpha_I=None,
-        alpha_E=None, protect=False, protect_args=None,
-        num_people=None, score_type="mse", fit_method="scipy-NM"
+        self, De, Di, y0_source_region, source_region_index, gamma_func_args,
+        Pmn_func_args, alpha_I, alpha_E, protect=False,
+        protect_args=None, num_people=None, score_type="mse"
     ):
         """
         一个基于网络的SEIR传染病模型，其参数有以下的部分：
@@ -39,11 +40,11 @@ class NetSEIR(InfectiousBase):
             num_people: 各个地区的人口，因为我们得到的是比例，想要得到实际人数需要再乘以
                 总人口数
             score_type： 计算score的方式，mse或nll（-log likelihood）
-            fit_method： 拟合参数时使用的优化方法
         """
         super().__init__(
-            De, Di, y0, gamma_func_args, Pmn_func_args, alpha_I, alpha_E,
-            protect, protect_args, num_people, score_type, fit_method
+            De, Di, y0_source_region, source_region_index, gamma_func_args,
+            Pmn_func_args, alpha_I, alpha_E, protect, protect_args, num_people,
+            score_type
         )
         if self.protect and self.protect_args is None:
             raise ValueError("protect_args must not be None!")
@@ -51,9 +52,17 @@ class NetSEIR(InfectiousBase):
         self.gamma_func = GammaFunc(*self.gamma_func_args)
         self.Pmn_func = PmnFunc(*self.Pmn_func_args)
         self.num_regions = self.Pmn_func(0).shape[0]
-        # 实际使用的是theta和beta，所以De和Di是不能作为参数来fit的
         self.theta = 1 / self.De
         self.beta = 1 / self.Di
+
+        self.source_region_index = source_region_index
+        self.source_region_index2 = source_region_index + 2 * self.num_regions
+        I0 = np.zeros(self.num_regions)
+        I0[self.source_region_index] = self.y0_source_region \
+            / self.num_people[self.source_region_index]
+        self.y0 = np.r_[
+            np.ones(self.num_regions), np.zeros(self.num_regions), I0
+        ]
 
     def __call__(self, t, SEI):
         """
@@ -123,10 +132,6 @@ class NetSEIR(InfectiousBase):
         le_bool = t <= t0
         return le_bool + (1 - le_bool) * np.exp(-k * (t - t0))
 
-    @staticmethod
-    def protect_decay1(t, t0, k):
-        pass
-
     def score(self, times, true_infects, mask=None):
         """
         因为这里是多个地区的预测，所以true_infects也是一个二维矩阵，即
@@ -134,7 +139,7 @@ class NetSEIR(InfectiousBase):
         """
         _, _, preds = self.predict(times)
         if mask is not None:
-            preds, true_infects = preds[:, mask], true_infects[:, mask]
+            preds, true_infects = preds * mask, true_infects * mask
         if self.score_type == "mse":
             return np.mean((true_infects - preds) ** 2)
         elif self.score_type == "nll":
@@ -161,17 +166,32 @@ class NetSEIR(InfectiousBase):
         eigs, _ = np.linalg.eig(FVs)
         return abs(eigs).max(axis=1)
 
+    def set_params(self, params):
+        """
+        将当前的参数设置到模型中，注意，需要使用运行init方法，这样才能更新一些参数，
+        比如y0、gammafunc等
+        """
+        self.kwargs["alpha_E"] = params[0]
+        self.kwargs["alpha_I"] = params[1]
+        self.kwargs["y0_source_region"] = params[2]
+        self.kwargs["protect_args"]["k"] = params[3:]
+        self.__init__(**self.kwargs)
 
-def set_model(model, params):
-    model.alpha_E = model.kwargs["alpha_E"] = params[0]
-    model.alpha_I = model.kwargs["alpha_I"] = params[1]
-    model.protect_args["k"] = model.kwargs["protect_args"]["k"] = params[2:]
+
+# def set_model(model, params):
+#     model.alpha_E = model.kwargs["alpha_E"] = params[0]
+#     model.alpha_I = model.kwargs["alpha_I"] = params[1]
+#     model.y0 = model.kwargs["y0"] = np.zeros_like(model.y0)
+#     model.y0[model.wh_hb_index2] = model.kwargs["y0"][model.wh_hb_index2] = \
+#         params[2] / model.num_people[model.wh_hb_index]
+#     model.protect_args["k"] = model.kwargs["protect_args"]["k"] = params[3:]
 
 
 def score_func(params, model, true_times, true_values, mask=None):
     model_copy = deepcopy(model)
-    set_model(model_copy, params)
-    return model_copy.score(true_times, true_values, mask=None)
+    # set_model(model_copy, params)
+    model_copy.set_params(params)
+    return model_copy.score(true_times, true_values, mask=mask)
 
     # def save_opt_res(self, save_file):
     #     utils.save(self.opt_res, save_file, "pkl")
@@ -203,7 +223,7 @@ if __name__ == "__main__":
     parser.add_argument("--alpha_I", default=0.15, type=float)
     parser.add_argument("--De", default=3, type=float)
     parser.add_argument("--Di", default=14, type=float)
-    parser.add_argument("--protect_t0", default="2020-01-23")
+    # parser.add_argument("--protect_t0", default="2020-01-23")
     parser.add_argument("--protect_k", default=0.001, type=float)
     parser.add_argument("--fit_score", default="nll", choices=["nll", "mse"])
     parser.add_argument("--fit_time_start", default="2020-02-01")
@@ -237,8 +257,8 @@ if __name__ == "__main__":
 
     # 时间调整(我们记录的数据都是以ordinal格式记录，但输入模型中需要以相对格式输入,其中t0是0)
     t0 = utils.time_str2ord(args.t0)  # 疫情开始时间
-    # protect_t0_relative = dats["response_time"] - t0  # 防控开始时间
-    protect_t0_relative = utils.time_str2diff(args.protect_t0, args.t0)
+    protect_t0_relative = dats["response_time"] - t0  # 防控开始时间
+    # protect_t0_relative = utils.time_str2diff(args.protect_t0, args.t0)
     epi_t0_relative = dats["epidemic_t0"] - t0  # 第一个确诊病例出现的时间
     pmn_matrix_relative = {(k-t0): v for k, v in dats["pmn"].items()}  # pmn的时间
     epi_times_relative = np.arange(  # 确诊病例时间
@@ -263,10 +283,10 @@ if __name__ == "__main__":
 
     # 构造y0
     num_regions = len(dats["regions"])
-    y0 = np.zeros(num_regions)
-    y0[hb_wh_index] = args.y0
-    y0 = y0 / dats["population"]
-    y0 = np.r_[np.ones(num_regions), np.zeros(num_regions), y0]
+    # y0 = np.zeros(num_regions)
+    # y0[hb_wh_index] = args.y0
+    # y0 = y0 / dats["population"]
+    # y0 = np.r_[np.ones(num_regions), np.zeros(num_regions), y0]
 
     """ 构建、或读取、或训练模型 """
     # 根据不同的情况来得到合适的模型
@@ -274,7 +294,7 @@ if __name__ == "__main__":
         model = NetSEIR.load(args.model)
     else:
         model = NetSEIR(
-            args.De, args.Di, y0, (protect_t0_relative,),
+            args.De, args.Di, args.y0, hb_wh_index, (out_trend20_dict,),
             (pmn_matrix_relative, args.use_pmn_mean),
             args.alpha_I, args.alpha_E, protect=True,
             num_people=dats["population"],
@@ -282,38 +302,42 @@ if __name__ == "__main__":
             score_type=args.fit_score
         )
         if args.model == "fit":
-            # 首先找到我们使用的预测数据，这里不使用湖北的数据，不使用前期的数据，而使用
-            #   使用后面的数据
-            mask = np.full(num_regions, True, dtype=np.bool)
-            mask[hb_wh_index] = False
+            # 设置我们拟合模型需要的数据
+            mask = np.full(num_regions, 1)
+            mask[hb_wh_index] = 0
             use_fit_data_start = utils.time_str2ord(args.fit_time_start) - \
                 dats["epidemic_t0"]
             use_fit_data_time = epi_times_relative[use_fit_data_start:]
             use_fit_data_epid = dats["epidemic"][use_fit_data_start:]
-            # 设置搜索条件
-            x0 = [
-                2 + num_regions,
-                np.zeros(2 + num_regions),
-                np.r_[0.5, 0.5, np.full(num_regions, 0.5)]
-            ]
+
             # 搜索
-            best_x, opt_res = find_best(
-                lambda x: score_func(
+            def func(x):
+                return score_func(
                     x, model, use_fit_data_time, use_fit_data_epid, mask
-                ), x0, "geatpy", save_dir + "/"
+                )
+            opt_res = geaty_func(
+                func, dim=3+num_regions,
+                lb=np.r_[np.zeros(2), args.y0, np.zeros(num_regions)],
+                ub=np.r_[0.5, 0.5, 300, np.full(num_regions, 0.5)],
+                Encoding="BG", NIND=400, MAXGEN=25,
+                fig_dir=save_dir+"/", njobs=-1
             )
-            # 把k整理成dataframe，然后打印一下
+
+            # 把拟合得到的参数整理成dataframe，然后打印一下
             dfk = pd.DataFrame(
                 dict(
-                    region=["alpha_E", "alpha_I"] + dats["regions"],
+                    region=["alpha_E", "alpha_I", "y0"] + dats["regions"],
                     k=opt_res["BestParam"]
                 )
             )
             print(dfk)
+
             # 将得到的最优参数设置到模型中，并保存
-            set_model(model, best_x)
+            # set_model(model, opt_res["BestParam"])
+            model.set_params(opt_res["BestParam"])
             model.save(os.path.join(save_dir, "model.pkl"))
             utils.save(opt_res, os.path.join(save_dir, "opt_res.pkl"), "pkl")
+
     # 预测结果
     _, pred_EE_prot, pred_II_prot = model.predict(pred_times_relative)
     model.protect = False

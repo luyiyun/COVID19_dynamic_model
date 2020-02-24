@@ -1,4 +1,3 @@
-
 class PmnFunc:
     """
     得到Pmn关于t的函数。即得到每个时间点上的人口流动比例。
@@ -39,9 +38,16 @@ class PmnFunc:
         return result
 
 
-class GammaFunc2:
+class GammaFunc:
     def __init__(self, gammas, use_mean=False):
-        """ 所有城市移动人口占全国总人口的比例，暂时设为一个常数值 """
+        """
+        描述不同地区的人口迁出比的函数，输入时间（相对于t0的相对时间），输出当前时间的各个地区
+        的人口迁出比，是一个向量。
+            :param gammas: dict，key是相对时间点，value是对应的ndarray，表示每个地区的
+                在该时间点上的人口迁出比。
+            :param use_mean=False: 如果是True，则使用一个固定的值为人口迁出比，即当前
+                所有时间点上的人口迁出比的均值。
+        """
         self.gammas = gammas
         self.use_mean = use_mean
         if use_mean:
@@ -56,7 +62,6 @@ class GammaFunc2:
                 min(self.gamma_times), max(self.gamma_times)
 
     def __call__(self, ord_time):
-        """ 相对计时，相对于start day的计时，在start_day=0 """
         if self.use_mean:
             return self.gamma_mean
         if ord_time <= self.gamma_times_min:
@@ -71,12 +76,30 @@ class GammaFunc2:
         return result
 
 
-class GammaFunc:
-    def __init__(self, protect_t0):
-        """ 所有城市移动人口占全国总人口的比例，暂时设为一个常数值 """
+class GammaFunc2:
+    def __init__(self, gammas=0.1255, protect_t0=None, ks=None):
+        """
+        描述不同地区的人口迁出比的函数，输入时间（相对于t0的相对时间），输出当前时间的各个地区
+        的人口迁出比，是一个向量。
+            :param gammas: float，表示全国平均的人口迁出比，所以地区使用一个值。
+            :param protect_t0: float或ndarray，是每个地区的预防措施时间，在此时间后人
+                口流动会线性下降至0，其下降的斜率是ks。如果是None，则认为会严格按照给定的
+                gammas进行人口流动，不会有线性下降到0的过程。
+            :param ks: float或ndarray，表示每个地区限制人流的措施的实施程度，即上面
+                线性下降过程的斜率。如果是None，则表示在t0时刻直接降为0
+        """
+        self.gammas = gammas
         self.protect_t0 = protect_t0
+        self.ks = ks
 
     def __call__(self, ord_time):
         """ 相对计时，相对于start day的计时，在start_day=0 """
-        le_bool = ord_time <= self.protect_t0
-        return 0.1255 * le_bool
+        if self.protect_t0 is not None:
+            le_bool = ord_time <= self.protect_t0
+            now_gammas = self.gammas * le_bool
+            if self.ks is not None:
+                now_gammas += (self.gammas-self.ks*(ord-self.protect_t0)) *\
+                    (1 - le_bool)
+                return now_gammas * (now_gammas > 0)
+            return now_gammas
+        return self.gammas

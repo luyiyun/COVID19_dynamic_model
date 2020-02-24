@@ -251,8 +251,8 @@ def preprocess_provinces_epidemic():
     # 整理省的名称
     epidemic_dat.loc[:, "region"] = province_remove_end(epidemic_dat.region)
     # 整理values
-    epidemic_dat["value"] = epidemic_dat.iloc[:, 1]
-    # - epidemic_dat.iloc[:, 2] - epidemic_dat.iloc[:, 3]
+    epidemic_dat["value"] = epidemic_dat.iloc[:, 1] \
+        - epidemic_dat.iloc[:, 2] - epidemic_dat.iloc[:, 3]
     # 整理时间
     #   将出现疫情最早的那一天看做t0，并将时间进行整理，全部转换成ordinal格式
     epidemic_dat.loc[:, "time"] = epidemic_dat.time.map(
@@ -378,6 +378,7 @@ def preprocess_provinces():
         "out_trend20": out_trend20,
         "out_trend19": out_trend19
     }
+    import ipdb; ipdb.set_trace()
     with open("./DATA/Provinces.pkl", "wb") as f:
         pickle.dump(all_dat, f)
 

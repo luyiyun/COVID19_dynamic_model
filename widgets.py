@@ -38,7 +38,7 @@ class PmnFunc:
         return result
 
 
-class GammaFunc:
+class GammaFunc1:
     def __init__(self, gammas, use_mean=False):
         """
         描述不同地区的人口迁出比的函数，输入时间（相对于t0的相对时间），输出当前时间的各个地区

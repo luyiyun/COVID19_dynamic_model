@@ -12,7 +12,7 @@ from model import InfectiousBase
 from geatyAlg import geaty_func
 from plot import plot_one_regions
 
-from widgets import GammaFunc, PmnFunc
+from widgets import GammaFunc2, PmnFunc
 
 
 class NetSEIR(InfectiousBase):
@@ -49,7 +49,7 @@ class NetSEIR(InfectiousBase):
         if self.protect and self.protect_args is None:
             raise ValueError("protect_args must not be None!")
 
-        self.gamma_func = GammaFunc(*self.gamma_func_args)
+        self.gamma_func = GammaFunc2(*self.gamma_func_args)
         self.Pmn_func = PmnFunc(*self.Pmn_func_args)
         self.num_regions = self.Pmn_func(0).shape[0]
         self.theta = 1 / self.De
@@ -174,7 +174,10 @@ class NetSEIR(InfectiousBase):
         self.kwargs["alpha_E"] = params[0]
         self.kwargs["alpha_I"] = params[1]
         self.kwargs["y0_source_region"] = params[2]
-        self.kwargs["protect_args"]["k"] = params[3:]
+        # gamma_args = list(self.kwargs["gamma_func_args"])
+        # gamma_args[0] = params[3]
+        # self.kwargs["gamma_func_args"] = gamma_args
+        self.kwargs["protect_args"]["k"] = params[4:]
         self.__init__(**self.kwargs)
 
 
@@ -316,17 +319,17 @@ if __name__ == "__main__":
                     x, model, use_fit_data_time, use_fit_data_epid, mask
                 )
             opt_res = geaty_func(
-                func, dim=3+num_regions,
-                lb=np.r_[np.zeros(2), args.y0, np.zeros(num_regions)],
-                ub=np.r_[0.5, 0.5, 300, np.full(num_regions, 0.5)],
-                Encoding="BG", NIND=400, MAXGEN=25,
+                func, dim=4+num_regions,
+                lb=np.r_[np.zeros(2), args.y0, 0, np.zeros(num_regions)],
+                ub=np.r_[0.5, 0.5, 300, 0.2, np.full(num_regions, 0.5)],
+                Encoding="BG", NIND=4000, MAXGEN=25,
                 fig_dir=save_dir+"/", njobs=-1
             )
 
             # 把拟合得到的参数整理成dataframe，然后打印一下
             dfk = pd.DataFrame(
                 dict(
-                    region=["alpha_E", "alpha_I", "y0"] + dats["regions"],
+                    region=["alpha_E", "alpha_I", "y0", "gamma"] + dats["regions"],
                     k=opt_res["BestParam"]
                 )
             )

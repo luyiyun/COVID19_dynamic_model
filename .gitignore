@@ -1,5 +1,6 @@
 DATA/
 RESULTS/
+RESULTS2/
 .*
 !.gitignore
 __pycache__/

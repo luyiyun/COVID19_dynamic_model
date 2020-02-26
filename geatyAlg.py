@@ -53,6 +53,7 @@ class MyProblem(ea.Problem):  # 继承Problem父类
             for i in range(x.shape[0]):
                 results.append(self.func(x[i, :]))
             results = np.stack(results, axis=0)
+            results = np.expand_dims(results, 1)
         # 计算目标函数值，赋值给pop种群对象的ObjV属性
         pop.ObjV = results
         # 打印计数信息，便于进行查看

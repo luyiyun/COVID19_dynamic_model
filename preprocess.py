@@ -251,13 +251,15 @@ def preprocess_provinces_epidemic():
     # 整理省的名称
     epidemic_dat.loc[:, "region"] = province_remove_end(epidemic_dat.region)
     # 整理values
-    epidemic_dat["value"] = epidemic_dat.iloc[:, 1] \
+    epidemic_dat["trueH"] = epidemic_dat.iloc[:, 1] \
         - epidemic_dat.iloc[:, 2] - epidemic_dat.iloc[:, 3]
+    epidemic_dat.rename(columns={"省治愈": "trueR", "省死亡": "trueD"},
+                        inplace=True)
     # 整理时间
     #   将出现疫情最早的那一天看做t0，并将时间进行整理，全部转换成ordinal格式
     epidemic_dat.loc[:, "time"] = epidemic_dat.time.map(
         lambda x: parse(x).toordinal())
-    return epidemic_dat.loc[:, ["region", "time", "value"]]
+    return epidemic_dat.loc[:, ["region", "time", "trueH", "trueR", "trueD"]]
 
 
 def preprocess_provinces_population():
@@ -317,6 +319,8 @@ def preprocess_provinces():
     set1, set2, set3 = (set(regions), set(epidemic.region),
                         set(population.region))
     common = list(set1.intersection(set2).intersection(set3))
+    common.remove("湖北")
+    common.insert(0, "湖北")
     print("3个数据共同都有的省份数量是%d" % len(common))
     pmn = pmn[pmn.source.isin(common) & pmn.target.isin(common)]
     epidemic = epidemic[epidemic.region.isin(common)]
@@ -334,19 +338,27 @@ def preprocess_provinces():
     epidemic.replace(prov_map, inplace=True)
     out_trend.replace(prov_map, inplace=True)
 
-    # 因为要把时间作为array的一个轴，需要使用sparse to dense的技术来转换，这需要时间必须是
-    #   从0开始，所以这里先把epidemic的时间进行调整，注意，这里进行记录0时间点的具体的ord
-    #   格式
-    epi_t0 = epidemic.time.min()
-    epidemic.loc[:, "time"] = epidemic.time - epi_t0
-
     print("将dat转换成mat")
+    # 整理population数据
     population.set_index("region", inplace=True)
     population_arr = population.loc[common, "population"].values
-    epidemic_arr = utils.df_to_mat(
+    # 整理epidemic数据
+    epi_t0 = epidemic.time.min()
+    epidemic.loc[:, "time"] = epidemic.time - epi_t0
+    trueH_arr = utils.df_to_mat(
         epidemic, (epidemic.time.max()+1, len(common)),
-        source="time", target="region", values="value"
+        source="time", target="region", values="trueH"
     )
+    trueR_arr = utils.df_to_mat(
+        epidemic, (epidemic.time.max()+1, len(common)),
+        source="time", target="region", values="trueR"
+    )
+    trueD_arr = utils.df_to_mat(
+        epidemic, (epidemic.time.max()+1, len(common)),
+        source="time", target="region", values="trueD"
+    )
+
+    # 整理pmn数据
     pmn_arrs = {}
     for d in set(pmn.time):
         mat = utils.df_to_mat(pmn[pmn.time == d], (len(common), len(common)))
@@ -369,7 +381,7 @@ def preprocess_provinces():
     all_dat = {
         "epidemic_t0": epi_t0,
         "out_trend_t0": out_trend_t0,
-        "epidemic": epidemic_arr,
+        "trueH": trueH_arr, "trueR": trueR_arr, "trueD": trueD_arr,
         "regions": common,
         "population": population_arr,
         "pmn": pmn_arrs,
@@ -378,7 +390,6 @@ def preprocess_provinces():
         "out_trend20": out_trend20,
         "out_trend19": out_trend19
     }
-    import ipdb; ipdb.set_trace()
     with open("./DATA/Provinces.pkl", "wb") as f:
         pickle.dump(all_dat, f)
 

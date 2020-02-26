@@ -2,6 +2,7 @@ import os
 from datetime import date
 import pickle
 import json
+import re
 
 import numpy as np
 from scipy import sparse
@@ -150,6 +151,44 @@ class PmnFunc:
         return result
 
 
+class PmnFunc2:
+    """
+    得到Pmn关于t的函数。即得到每个时间点上的人口流动比例。
+    """
+    def __init__(self, pmn, use_mean=False):
+        """
+        只考虑湖北的人口迁出
+        """
+        self.pmn = pmn
+        self.use_mean = use_mean
+        if self.use_mean:
+            vv, counts = 0, 0
+            for v in self.pmn.values():
+                vv += v
+                counts += 1
+            self.pmn_mean = vv / counts
+        else:
+            self.pmn_times = list(self.pmn.keys())
+            self.pmn_times_min, self.pmn_times_max = \
+                min(self.pmn_times), max(self.pmn_times)
+
+    def __call__(self, ord_time):
+        """
+        ord_time，相对于t0的相对计时，比如，t0那一天就是0，其后一天是1.
+        """
+        if self.use_mean:
+            return self.pmn_mean
+        if ord_time <= self.pmn_times_min:
+            return self.pmn[self.pmn_times_min]
+        elif ord_time >= self.pmn_times_max:
+            return self.pmn[self.pmn_times_max]
+        else:
+            ord_time_int = int(ord_time)
+            diff = self.pmn[ord_time_int+1] - self.pmn[ord_time_int]
+            result = self.pmn[ord_time_int] + diff * (ord_time - ord_time_int)
+        return result
+
+
 class GammaFunc1:
     def __init__(self, gammas, use_mean=False):
         """
@@ -262,3 +301,23 @@ class MyArguments(ArgumentParser):
         args.tm_relative = time_str2diff(args.tm, args.t0)
         args.fit_start_relative = time_str2diff(args.fit_time_start, args.t0)
         return args
+
+
+def parser_key(key):
+    if "[" in key and "]" in key:
+        key1, key2 = key.split("[")
+        key2 = key2[:-1]  # 去掉]
+        if ":" in key2:
+            ind1, ind2 = key2.split(":")
+            slice_ind = slice(int(ind1), int(ind2))
+        else:
+            slice_ind = int(key2)
+    else:
+        key1, slice_ind = key, None
+
+    if "-" in key1:
+        key11, key22 = key1.split("-")
+    else:
+        key11, key22 = key1, None
+
+    return key11, key22, slice_ind

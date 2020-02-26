@@ -86,12 +86,23 @@ class InfectiousBase:
 
     @property
     def fit_params_info(self):
+        """
+        1. 这里记录我们需要更新的参数的信息，如果想要变换我们更新的参数，就在这里更改，来方便
+        程序的实验。
+        2. 这里使用OrderDict进行记录，键为其对应的属性名，而值是这个参数的(维度, 下限，上限)
+        3. 如果key使用A-B的格式，则这里表示的是self.A["B"]的值
+        4. 如果key中在最后有[n1:n2]的字样，则表示当前要将params赋值到该参数的n1:n2切片上，
+            当然，也可以是[n1]表示单个值的定位
+        5. 可以选择性的在value最后再跟一个列表，其中每个元素对应的是当前参数的解释，可以在打印
+            信息的时候使用
+        """
         raise NotImplementedError
 
     def fit_params_range(self):
         """ 利用fit_params_info记录的参数信息，返回所有参数的维度、拟合范围 """
         num_params, lb, ub = 0, [], []
-        for n, l, u in self.fit_params_info.values():
+        for vs in self.fit_params_info.values():
+            n, l, u = vs[:3]
             num_params += n
             lb.extend([l] * n)
             ub.extend([u] * n)
@@ -105,11 +116,17 @@ class InfectiousBase:
         """
         i = 0
         for k, v in self.fit_params_info.items():
-            if "-" not in k:
-                self.kwargs[k] = params[i:(i+v[0])]
+            key1, key2, ind = utils.parser_key(k)
+            if key2 is not None:
+                if ind is not None:
+                    self.kwargs[key1][key2][ind] = params[i:(i+v[0])]
+                else:
+                    self.kwargs[key1][key2] = params[i:(i+v[0])]
             else:
-                k1, k2 = k.split("-")
-                self.kwargs[k1][k2] = params[i:(i+v[0])]
+                if ind is not None:
+                    self.kwargs[key1][ind] = params[i:(i+v[0])]
+                else:
+                    self.kwargs[key1] = params[i:(i+v[0])]
             i += v[0]
         self.__init__(**self.kwargs)
 

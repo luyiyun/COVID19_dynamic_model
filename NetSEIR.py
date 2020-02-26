@@ -98,8 +98,8 @@ class NetSEIR(InfectiousBase):
 
     @staticmethod
     def protect_decay(t, **kwargs):
-        # return utils.protect_decay1(t, t0, tm, eta)
-        return utils.protect_decay2(t, **kwargs)
+        # return utils.protect_decay2(t, **kwargs)
+        return utils.protect_decay1(t, **kwargs)
 
     def score(self, times, true_infects, mask=None):
         """
@@ -128,11 +128,11 @@ class NetSEIR(InfectiousBase):
         3. 如果key使用A-B的格式，则这里表示的是self.A["B"]的值
         """
         params = OrderedDict()
-        # params["alpha_E"] = (1, 0, 0.1)
+        params["alpha_E"] = (1, 0, 0.5)
         params["alpha_I"] = (1, 0, 1)
-        # params["protect_args-eta"] = (31, 0, 1)
-        # params["protect_args-tm"] = (31, 0, 31)
-        params["protect_args-k"] = (31, 0, 0.5)
+        params["protect_args-eta"] = (31, 0, 1)
+        params["protect_args-tm"] = (31, 0, 31)
+        # params["protect_args-k"] = (31, 0, 1)
         params["y0for1"] = (1, 1, 100)
         return params
 
@@ -186,10 +186,14 @@ def main():
             De=args.De, Di=args.Di, populations=dats["population"],
             y0for1=args.y0, alpha_I=args.alpha_I, alpha_E=args.alpha_E,
             protect=True,
-            protect_args={"t0": protect_t0_relative, "k": 0.0},
+            protect_args={
+                "t0": protect_t0_relative,
+                "tm": 31,
+                "eta": 0.89
+            },
             score_type=args.fit_score,
             gamma_func_kwargs={"protect_t0": protect_t0_relative,
-                               "gammas": 0.1255},
+                               "gammas": 0.06},
             Pmn_func_kwargs={"pmn": pmn_matrix_relative}
         )
         if args.model == "fit":
@@ -235,8 +239,8 @@ def main():
             )
             # 将得到的最优参数设置到模型中，并保存
             model.set_params(opt_res["BestParam"])
-            for i, rr in enumerate(dats["regions"]):
-                print("%s: %.4f" % (rr, model.protect_args["k"][i]))
+            # for i, rr in enumerate(dats["regions"]):
+            #     print("%s: %.4f" % (rr, model.protect_args["k"][i]))
             model.save(os.path.join(args.save_dir, "model.pkl"))
             utils.save(opt_res, os.path.join(args.save_dir, "opt_res.pkl"))
 

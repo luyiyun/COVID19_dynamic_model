@@ -25,8 +25,8 @@ class InfectiousBase:
 
     def __init__(self, *args, **kwargs):
         """
-        注意，实例化子类的时候，记得把所有的参数都放到super().__init__()中，这样可以自动
-        记忆所有的参数，便于之后保存和读取的时候使用
+        接受的是子类初始化时的参数，会将其全部设为实例属性，并保存到kwargs属性中，便于之后保存
+        和读取时使用
         """
         self.rtol, self.atol = 1e-8, 1e-8  # 1e-5会出现问题
         # 将子类所有的参数都记录到属性kwargs中
@@ -41,24 +41,29 @@ class InfectiousBase:
 
     def __call__(self, t, vars):
         """
-        这里实现的是微分方程组标准形式的右侧部分。
-        用于输入到`solve_ivp`中进行求解
-        """
-        raise NotImplementedError
+        实现微分方程标准形式的右侧部分，用于输入到solve_ivp中进行求解
 
-    def score(self, times, trues, mask=None):
-        """
-        输出评价指标，参数times是时间点，trues是真实的每个时间点上的值，
-        ndarray
+        Arguments:
+            t {float} -- 时间
+            vars {ndarray} -- 当前时间点上的值，shape等于方程的数量
+
+        Raises:
+            NotImplementedError
+
+        Returns:
+            ndarray -- 当前各个值的导数
         """
         raise NotImplementedError
 
     def predict(self, times):
         """
-        输入想要预测的时间点，得到其预测值
-        需要是ndarray
-        返回的是ndarray, dim = len(times) * len(vars)
-        注意，这里得到的是所有预测值，一般来说，还需要在子类中对其进行进一步的封装
+        预测，这里得到的是所有预测值，一般来说，还需要在子类中对其进行进一步的封装和分类
+
+        Arguments:
+            times {ndarray} -- 想要计算的时间点
+
+        Returns:
+            ndarray -- shape=(n_times, n_equ)
         """
         t_span = (0, times.max())
         results = integrate.solve_ivp(
@@ -68,21 +73,58 @@ class InfectiousBase:
         )
         return results.y.T
 
-    @property
-    def R(self):
+    def score(self, times, trues, mask=None):
         """
-        估计基本再生数
+        评价指标
+
+        Arguments:
+            times {ndarray} -- 时间点
+            trues {ndarray} -- 对应时间点上的真实值
+
+        Keyword Arguments:
+            mask {ndarray} -- 掩模，其=0或=False的地方会覆盖掉times和trues，被覆盖掉的
+                值不会参与计算 (default: {None})
+
+        Raises:
+            NotImplementedError: [description]
+
+        Returns:
+            float -- 评价得分，越小越好
         """
         raise NotImplementedError
 
+    @property
+    def R(self):
+        """ 估计基本再生数 """
+        raise NotImplementedError
+
     def save(self, filename):
-        """ 保存参数, 使用pkl可以保存ndarray """
+        """
+        保存
+
+        Arguments:
+            filename {str} -- 保存的地址
+        """
         utils.save(self.kwargs, filename, "pkl")
 
     @classmethod
     def load(cls, filename):
+        """
+        载入模型
+
+        Arguments:
+            filename {str} -- 载入保存的模型或模型列表
+
+        Returns:
+            Infectious or list -- 重新实例化的模型或模型列表
+        """
         configs = utils.load(filename, "pkl")
-        return cls(**configs)
+        if isinstance(configs, dict):
+            return cls(**configs)
+        elif isinstance(configs, list):
+            return [cls(**config) for config in configs]
+        else:
+            raise ValueError
 
     @property
     def fit_params_info(self):
@@ -95,11 +137,19 @@ class InfectiousBase:
             当然，也可以是[n1]表示单个值的定位
         5. 可以选择性的在value最后再跟一个列表，其中每个元素对应的是当前参数的解释，可以在打印
             信息的时候使用
+
+        Raises:
+            NotImplementedError: [description]
         """
         raise NotImplementedError
 
     def fit_params_range(self):
-        """ 利用fit_params_info记录的参数信息，返回所有参数的维度、拟合范围 """
+        """
+        得到所有需要拟合参数的维度、拟合范围
+
+        Returns:
+            (int, ndarray, ndarray) -- 参数向量维度、拟合下限，拟合上限（包含这个界限）
+        """
         num_params, lb, ub = 0, [], []
         for vs in self.fit_params_info.values():
             n, l, u = vs[:3]
@@ -110,9 +160,10 @@ class InfectiousBase:
 
     def set_params(self, params):
         """
-        利用的是fit_params_info的信息
-        将当前的参数设置到模型中，注意，需要使用运行init方法，这样才能更新一些参数，
-        比如y0、gammafunc等
+        将params向量中储存的拟合参数信息整合到模型中
+
+        Arguments:
+            params {ndarray} -- shape = 所有参数的总和
         """
         i = 0
         for k, v in self.fit_params_info.items():
@@ -132,19 +183,42 @@ class InfectiousBase:
 
 
 def score_func(params, model, score_kwargs):
-    # try:
-    # 有些不好的参数，可能会导致微分方程不收敛，则会保存，这时我们认为这些参数是坏的，
-    # 返回一个大值表示其loss
-    model_copy = deepcopy(model)
+    """
+    得到对应参数的得分
+
+    Arguments:
+        params {ndarray} -- 当前参数组成的ndarray，shape=(参数量,)
+        model {Infectious实例} -- 需要拟合的模型
+        score_kwargs {dict} -- model.score方法需要的一些参数
+
+    Returns:
+        float -- 评价得分
+    """
+    model_copy = deepcopy(model)  # copy一下，防止在多进程时造成数据的错误
     model_copy.set_params(params)
     return model_copy.score(**score_kwargs)
-    # except ValueError:
-    # return np.inf
 
 
 def find_best(func, dim, lb, ub, method="geatpy", **kwargs):
     """
-    kwargs: 不同拟合方法所需要的额外参数
+    寻找当前函数的最小值对应的参数
+
+    Arguments:
+        func {callable} -- 单输入函数，返回float
+        dim {int} -- 拟合参数数量
+        lb {ndarray} -- 各个参数的下限
+        ub {ndarray} -- 各个参数的上限
+
+    Keyword Arguments:
+        method {str} -- [description] (default: {"geatpy"})
+        kwargs -- 各个最优化方法需要的其他参数
+
+    Raises:
+        NotImplementedError: [description]
+
+    Returns:
+        dict -- opt_res，不同的方法内容不同，但都有一个BestParams，其中的内容是一个
+            ndarray，表示找到的最优参数
     """
     if method == "geatpy":
         opt_res = geaty_func(
@@ -164,3 +238,15 @@ def find_best(func, dim, lb, ub, method="geatpy", **kwargs):
     else:
         raise NotImplementedError
     return opt_res
+
+
+def save_models(models, filename):
+    """
+    保存模型组成的list
+
+    Arguments:
+        models {list} -- 里面每个元素是一个Infectious模型
+        filename {str} -- 保存的文件名
+    """
+    kwarg_list = [model.kwargs for model in models]
+    utils.save(kwarg_list, filename)

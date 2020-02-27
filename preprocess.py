@@ -242,7 +242,7 @@ def preprocess_provinces_epidemic2():
 
 def preprocess_provinces_epidemic():
     # 读取数据，并做初步的处理
-    epidemic_dat = pd.read_csv("./DATA/Original/DXYArea0218.csv")
+    epidemic_dat = pd.read_csv("./DATA/Original/DXYArea0227.csv")
     epidemic_dat = epidemic_dat.iloc[:, [0, 1, 2, 3, -1]]
     epidemic_dat.rename(
         columns={"省": "region", "日期": "time"},

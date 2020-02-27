@@ -3,9 +3,10 @@ from collections import OrderedDict
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 import utils
-from plot import under_area, plot_all
+from plot import under_area, plot_one_regions
 from model import InfectiousBase, score_func, find_best
 
 
@@ -16,24 +17,32 @@ class NetSEIR(InfectiousBase):
         protect_args=None, score_type="mse"
     ):
         """
-        一个基于网络的SEIR传染病模型，其参数有以下的部分：
-        args：
-            De: 潜伏期，天
-            Di: 染病期，天
-            y0for1: 武汉或湖北的在t0那一天的初始值。
-            populations: 各个地区的人口，因为我们得到的是比例，
-                想要得到实际人数需要再乘以总人口数
-            gamma_func_kwargs： 平均迁出人口比随时间的变化, 这里需要的是该函数的kwargs
-            Pmn_func_kwargs：各个地区间的人口流动矩阵，其实也是一个关于t的函数，
-                只是每个时间点返回的是一个矩阵，其第nm个元素表示的是从n地区移动
-                到m地区所占n地区总流动人口的比例，这里需要输入的是其参数组成的dict
-            protect: boolean，是否加入管控项
-            protect_args：管控项的各项参数，如果protect，则此必须给出，以dict的形式,
-                没有第一个参数t
-            alpha_I, alpha_E：传染期和潜伏期的基本传染率系数（就是没有加管控因素的那个常数）
-                ，如果是None，则表示此参数不知道，需要自己估计，这时无法predict，需要先
-                fit来通过现有数据来估计。如果给出了指定的数值，则可以直接predict。
-            score_type： 计算score的方式，mse或nll（-log likelihood）
+        一个基于复杂人口迁徙网络的SEIR模型。
+
+        Arguments:
+            De {float} -- 平均潜伏期
+            Di {float} -- 平均患病期
+            y0for1 {float} -- t0时刻，region-1的患病（I）人数
+            populations {ndarray} -- 每个region的人口
+            gamma_func_kwargs {dict} -- 用于GammaFunc函数实例化的参数，表示人口迁出
+                比的变化趋势
+            Pmn_func_kwargs {dict} -- 用于PmnFunc函数实例化的参数，表示各个region到
+                其他regions人口迁出率的变化
+            alpha_I {float} -- 患病者的感染率系数
+            alpha_E {float} -- 潜伏者的感染率系数
+
+        Keyword Arguments:
+            protect {bool} -- 是否加入防控措施 (default: {False})
+            protect_args {dict} -- 防控措施函数需要的参数，除了时间t (default: {None})
+            score_type {str} -- 使用的score类型， mse或nll (default: {"mse"})
+
+        Raises:
+            ValueError: [description]
+            ValueError: [description]
+            NotImplementedError: [description]
+
+        Returns:
+            NetSEIR对象 -- 用于接下来的拟合、预测
         """
         super().__init__(
             De, Di, y0for1, populations, gamma_func_kwargs,
@@ -43,7 +52,7 @@ class NetSEIR(InfectiousBase):
         if self.protect and self.protect_args is None:
             raise ValueError("protect_args must not be None!")
 
-        self.gamma_func = utils.GammaFunc2(**self.gamma_func_kwargs)
+        self.gamma_func = utils.GammaFunc1(**self.gamma_func_kwargs)
         self.Pmn_func = utils.PmnFunc(**self.Pmn_func_kwargs)
         self.num_regions = len(self.populations)
         self.theta = 1 / self.De
@@ -51,19 +60,18 @@ class NetSEIR(InfectiousBase):
 
         # 在准备数据的时候将湖北或武汉放在第一个上
         I0 = np.zeros(self.num_regions)
-        I0[0] = self.y0for1 / self.populations[0]
+        I0[0] = self.y0for1
         self.y0 = np.r_[
-            np.ones(self.num_regions), np.zeros(self.num_regions), I0
+            self.populations - I0, np.zeros(self.num_regions), I0,
+            np.zeros(self.num_regions)
         ]
 
-    def __call__(self, t, SEI):
-        """
-        t是时间参数，
-        SEI分别是各个地区的S、各个地区的E、各个地区的I组成的一维ndarray向量
-        """
-        SS = SEI[:self.num_regions]
-        EE = SEI[self.num_regions:(2*self.num_regions)]
-        II = SEI[(2*self.num_regions):]
+    def __call__(self, t, SEIR):
+        SS = SEIR[:self.num_regions]
+        EE = SEIR[self.num_regions:(2*self.num_regions)]
+        II = SEIR[(2*self.num_regions):(3*self.num_regions)]
+        RR = SEIR[(3*self.num_regions):]
+        Nt = SS + EE + II + RR
 
         if self.protect:
             alpha_E = self.alpha_E * self.protect_decay(t, **self.protect_args)
@@ -71,8 +79,8 @@ class NetSEIR(InfectiousBase):
         else:
             alpha_E, alpha_I = self.alpha_E, self.alpha_I
 
-        s2e_i = alpha_I * SS * II
-        s2e_e = alpha_E * EE * SS
+        s2e_i = alpha_I * SS * II / Nt
+        s2e_e = alpha_E * EE * SS / Nt
         e2i = self.theta * EE
         i2r = self.beta * II
 
@@ -86,27 +94,34 @@ class NetSEIR(InfectiousBase):
         delta_s = - s2e_i - s2e_e + s_out_people
         delta_e = s2e_e + s2e_i + e_out_people - e2i
         delta_i = e2i - i2r + i_out_people
-        output = np.r_[delta_s, delta_e, delta_i]
+        delta_r = i2r
+        output = np.r_[delta_s, delta_e, delta_i, delta_r]
         return output
 
     def predict(self, times):
-        SEI = super().predict(times)
-        SS = SEI[:, :self.num_regions] * self.populations
-        EE = SEI[:, self.num_regions:(2*self.num_regions)] * self.populations
-        II = SEI[:, (2*self.num_regions):] * self.populations
-        return SS, EE, II
+        SEIR = super().predict(times)
+        SS = SEIR[:, :self.num_regions]
+        EE = SEIR[:, self.num_regions:(2*self.num_regions)]
+        II = SEIR[:, (2*self.num_regions):(3*self.num_regions)]
+        RR = SEIR[:, (3*self.num_regions):]
+
+        return SS, EE, II, RR
 
     @staticmethod
     def protect_decay(t, **kwargs):
-        # return utils.protect_decay2(t, **kwargs)
-        return utils.protect_decay1(t, **kwargs)
+        """
+        防控措施导致传染率系数变化为原来的百分比，随时间变化
+
+        Arguments:
+            t {float} -- 时间点
+
+        Returns:
+            float -- 在0-1之间
+        """
+        return utils.protect_decay2(t, **kwargs)
 
     def score(self, times, true_infects, mask=None):
-        """
-        因为这里是多个地区的预测，所以true_infects也是一个二维矩阵，即
-        shape = num_times x num_regions
-        """
-        _, _, preds = self.predict(times)
+        preds = self.predict(times)[2]
         if mask is not None:
             preds, true_infects = preds[:, mask], true_infects[:, mask]
         if self.score_type == "mse":
@@ -121,19 +136,13 @@ class NetSEIR(InfectiousBase):
 
     @property
     def fit_params_info(self):
-        """
-        1. 这里记录我们需要更新的参数的信息，如果想要变换我们更新的参数，就在这里更改，来方便
-        程序的实验。
-        2. 这里使用OrderDict进行记录，键为其对应的属性名，而值是这个参数的(维度, 下限，上限)
-        3. 如果key使用A-B的格式，则这里表示的是self.A["B"]的值
-        """
         params = OrderedDict()
         params["alpha_E"] = (1, 0, 0.5)
-        params["alpha_I"] = (1, 0, 1)
-        params["protect_args-eta"] = (31, 0, 1)
-        params["protect_args-tm"] = (31, 0, 31)
-        # params["protect_args-k"] = (31, 0, 1)
-        params["y0for1"] = (1, 1, 100)
+        params["alpha_I"] = (1, 0, 0.5)
+        # params["protect_args-eta"] = (31, 0, 1)
+        # params["protect_args-tm"] = (31, 0, 31)
+        params["protect_args-k"] = (31, 0, 1)
+        params["y0for1"] = (1, 1, 10)
         return params
 
 
@@ -154,28 +163,7 @@ def main():
         dat_file = "./DATA/City.pkl"
     else:
         dat_file = "./DATA/Provinces.pkl"
-    dats = utils.load(dat_file, "pkl")
-
-    # 时间调整(我们记录的数据都是以ordinal格式记录，但输入模型中需要以相对格式输入,其中t0是0)
-    t0 = utils.time_str2ord(args.t0)                              # 疫情开始时间
-    protect_t0_relative = dats["response_time"] - t0              # 防控开始时间
-    # protect_t0_relative = utils.time_str2diff("2020-01-23", args.t0)
-    epi_t0_relative = dats["epidemic_t0"] - t0                    # 第一确诊时间
-    pmn_matrix_relative = {                                       # pmn的时间
-        (k-t0): v for k, v in dats["pmn"].items()}
-    epi_times_relative = np.arange(                               # 确诊病例时间段
-        epi_t0_relative, epi_t0_relative + dats["trueH"].shape[0]
-    )
-    pred_times_relative = np.arange(0, args.tm_relative)          # 预测时间段
-    num_regions = len(dats["regions"])                            # 地区数目
-
-    out_trend20_times_relative = np.arange(                       # 迁出趋势时间
-        dats["out_trend_t0"]-t0,
-        dats["out_trend_t0"]-t0+dats["out_trend20"].shape[0]
-    )
-    out_trend20_dict = {}
-    for i, t in enumerate(out_trend20_times_relative):
-        out_trend20_dict[t] = dats["out_trend20"][i, :]
+    dataset = utils.Dataset(dat_file, args.t0, args.tm, args.fit_time_start)
 
     """ 构建、或读取、或训练模型 """
     # 根据不同的情况来得到合适的模型
@@ -183,30 +171,31 @@ def main():
         model = NetSEIR.load(args.model)
     else:
         model = NetSEIR(
-            De=args.De, Di=args.Di, populations=dats["population"],
+            De=args.De, Di=args.Di, populations=dataset.populations,
             y0for1=args.y0, alpha_I=args.alpha_I, alpha_E=args.alpha_E,
-            protect=True,
+            protect=True, score_type=args.fit_score,
             protect_args={
-                "t0": protect_t0_relative,
-                "tm": 31,
-                "eta": 0.89
+                "t0": dataset.protect_t0.relative,
+                "k": 0.0
             },
-            score_type=args.fit_score,
-            gamma_func_kwargs={"protect_t0": protect_t0_relative,
-                               "gammas": 0.06},
-            Pmn_func_kwargs={"pmn": pmn_matrix_relative}
+            gamma_func_kwargs={
+                # "protect_t0": dataset.protect_t0.relative,
+                # "gammas": 0.06
+                "gammas": dataset.out20_dict
+            },
+            Pmn_func_kwargs={"pmn": dataset.pmn_matrix_relative}
         )
         if args.model == "fit":
             # 设置我们拟合模型需要的数据
             if args.use_whhb:
                 mask = None
             else:
-                mask = np.full(num_regions, True, dtype=np.bool)
+                mask = np.full(dataset.num_regions, True, dtype=np.bool)
                 mask[0] = False
-            fit_start_index = args.fit_start_relative - epi_t0_relative
+            fit_start_index = dataset.fit_start_t.ord - dataset.epi_t0.ord
             score_kwargs = {
-                "times": epi_times_relative[fit_start_index:],
-                "true_infects": dats["trueH"][fit_start_index:, :],
+                "times": dataset.epi_times.relative[fit_start_index:],
+                "true_infects": dataset.trueH[fit_start_index:, :],
                 "mask": mask,
             }
             # 搜索
@@ -245,29 +234,44 @@ def main():
             utils.save(opt_res, os.path.join(args.save_dir, "opt_res.pkl"))
 
     # 预测结果
-    pred_prot = model.predict(pred_times_relative)[-1]
+    prot_preds = model.predict(dataset.pred_times.relative)
     model.protect = False
-    pred_nopr = model.predict(pred_times_relative)[-1]
+    nopr_preds = model.predict(dataset.pred_times.relative)
 
     """ 计算相关指标以及绘制图像 """
     # 预测R0
     pass
 
     # 计算每个地区的曲线下面积以及面积差,并保存
-    auc = under_area(epi_times_relative, dats["trueH"],
-                     pred_times_relative, pred_nopr)
-    results = {
-        "pred_times": pred_times_relative + t0,
-        "pred_prot": pred_prot, "pred_nopr": pred_nopr,
-        "true_times": epi_times_relative + t0,
-        "trueH": dats["trueH"], "auc": auc,
-        "regions": dats["regions"]
-    }
-    utils.save(results, os.path.join(args.save_dir, "pred.pkl"))
+    auc = under_area(
+        dataset.epi_times.relative,
+        dataset.trueH,
+        dataset.pred_times.relative,
+        nopr_preds[2],
+    )
+    utils.save(auc, os.path.join(args.save_dir, "auc.pkl"))
 
     # 为每个地区绘制曲线图
-    plot_all(args.regions, results, os.path.join(args.save_dir, "imgs"),
-             t0_ord=t0)
+    plt.rcParams["font.sans-serif"] = ["SimHei"]
+    img_dir = os.path.join(args.save_dir, "imgs")
+    if not os.path.exists(img_dir):
+        os.mkdir(img_dir)
+    for i, reg in enumerate(dataset.regions):
+        plot_one_regions(
+            reg, [
+                ("true", dataset.epi_times.ord, dataset.trueH[:, i], "ro"),
+                ("predI", dataset.pred_times.ord, prot_preds[2][:, i], "r"),
+                ("predE", dataset.pred_times.ord, prot_preds[1][:, i], "y"),
+                ("predR", dataset.pred_times.ord, prot_preds[3][:, i], "b")
+            ],
+            [
+                ("true", dataset.epi_times.ord, dataset.trueH[:, i], "ro"),
+                ("predI", dataset.pred_times.ord, nopr_preds[2][:, i], "r"),
+                ("predE", dataset.pred_times.ord, nopr_preds[1][:, i], "y"),
+                ("predR", dataset.pred_times.ord, nopr_preds[3][:, i], "b")
+            ],
+            save_dir=img_dir
+        )
 
 
 if __name__ == "__main__":

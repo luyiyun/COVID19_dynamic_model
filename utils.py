@@ -2,7 +2,6 @@ import os
 from datetime import date
 import pickle
 import json
-import re
 
 import numpy as np
 from scipy import sparse
@@ -12,26 +11,53 @@ from argparse import ArgumentParser
 ITER_COUNT = 0
 
 
+""" ========== 辅助函数 ========== """
+
+
 def clear_time(times):
-    """ 将时间从字符串变为date实例 """
+    """
+    将xxxx-xx-xx格式转换成Date对象
+
+    Arguments:
+        times {list of str} -- xxxx-xx-xx字符串组成的列表
+
+    Returns:
+        list of Date -- Date组成的列表
+    """
     need_times = [date.fromisoformat(t.strip()) for t in times]
     return need_times
 
 
 def clear_value(values):
+    """
+    xx% --> float(xx)
+
+    Arguments:
+        values {list of str} -- xx%组成的字符串列表
+
+    Returns:
+        list of float -- float列表
+    """
     """ 将百分比字符串变成float """
     return [float(v.strip()[:-1]) for v in values]
 
 
-def difference2(A, B):
-    common = set(A).intersection(set(B))
-    A_rest = list(set(A).difference(common))
-    B_rest = list(set(B).difference(common))
-    return list(common), [A_rest, B_rest]
-
-
 def df_to_mat(df, shape, source="source", target="target", values="value"):
-    """ 将稀疏格式变成密集矩阵 """
+    """
+    将稀疏格式变成密集矩阵
+
+    Arguments:
+        df {DataFrame} -- 储存坐标和值的df
+        shape {2-tuple} -- (nrow, ncol)
+
+    Keyword Arguments:
+        source {str} -- df中表示行坐标的列名 (default: {"source"})
+        target {str} -- df中表示列坐标的列名 (default: {"target"})
+        values {str} -- df中表示值的列名 (default: {"value"})
+
+    Returns:
+        ndarray -- shape=shape, matrix
+    """
     smat = sparse.coo_matrix(
         (df[values].values, (df[source].values, df[target].values)),
         shape=shape
@@ -39,20 +65,44 @@ def df_to_mat(df, shape, source="source", target="target", values="value"):
     return np.array(smat.todense())  # np.array将matrix变成array，不然ode会出错
 
 
-def normalize(mat):
-    """ 归一化mat，使之每一行和为1，没用到 """
-    return mat / mat.sum(axis=1, keepdims=True)
-
-
 def time_str2ord(t):
+    """
+    xxxx-xx-xx --> ordinal format
+
+    Arguments:
+        t {str} -- xxxx-xx-xx format
+
+    Returns:
+        int -- ordinal format
+    """
     return date.fromisoformat(t).toordinal()
 
 
 def time_date2diff(t, t0):
+    """
+    Date对象 --> 相对于t0过了多少天
+
+    Arguments:
+        t {Date} -- Date对象
+        t0 {str} -- xxxx-xx-xx format, 起始时间
+
+    Returns:
+        int -- 相对时间
+    """
     return t.toordinal() - time_str2ord(t0)
 
 
 def time_str2diff(t, t0=None):
+    """
+    xxxx-xx-xx --> 相对于t0过了多少天
+
+    Arguments:
+        t {str} -- xxxx-xx-xx format
+        t0 {str} -- xxxx-xx-xx format, 起始时间
+
+    Returns:
+        int -- 相对时间
+    """
     t_ord = time_str2ord(t)
     t0_ord = time_str2ord(t0)
     return t_ord - t0_ord
@@ -81,10 +131,84 @@ def load(filename, type="pkl"):
     return obj
 
 
+def parser_key(key):
+    if "[" in key and "]" in key:
+        key1, key2 = key.split("[")
+        key2 = key2[:-1]  # 去掉]
+        if ":" in key2:
+            ind1, ind2 = key2.split(":")
+            slice_ind = slice(int(ind1), int(ind2))
+        else:
+            slice_ind = int(key2)
+    else:
+        key1, slice_ind = key, None
+
+    if "-" in key1:
+        key11, key22 = key1.split("-")
+    else:
+        key11, key22 = key1, None
+
+    return key11, key22, slice_ind
+
+
+class Time:
+    _threshold = date.fromisoformat("2000-01-01").toordinal()
+
+    def __init__(self, tim, t0):
+        self.t0 = t0
+        self.t0_ord = time_str2ord(t0)
+        if isinstance(tim, (tuple, list, np.ndarray)):
+            test_elem = tim[0]
+            self.isSeq = True
+        else:
+            test_elem = tim
+            self.isSeq = False
+        if isinstance(test_elem, str):
+            self.init_from_str(tim)
+        elif test_elem > self._threshold:
+            self.init_from_ord(tim)
+        else:
+            self.init_from_rel(tim)
+
+    def init_from_str(self, strfmt):
+        self.str = strfmt
+        if self.isSeq:
+            self.ord = np.array([time_str2ord(s) for s in strfmt])
+            self.relative = np.array([
+                time_str2diff(s, self.t0) for s in strfmt])
+        else:
+            self.ord = time_str2ord(strfmt)
+            self.relative = time_str2diff(strfmt, self.t0)
+
+    def init_from_ord(self, ord):
+        self.ord = ord
+        if self.isSeq:
+            self.str = [str(date.fromordinal(o)) for o in ord]
+            self.relative = np.array([o - self.t0_ord for o in ord])
+        else:
+            self.str = str(date.fromordinal(ord))
+            self.relative = ord - self.t0_ord
+
+    def init_from_rel(self, rel):
+        self.relative = rel
+        if self.isSeq:
+            self.ord = np.array([r + self.t0_ord for r in rel])
+            self.str = [str(date.fromordinal(o)) for o in self.ord]
+        else:
+            self.ord = rel + self.t0_ord
+            self.str = str(date.fromordinal(self.ord))
+
+
+""" ========== 回调函数，用于annealing fit方法 ========== """
+
+
 def callback(x, f, context):
     global ITER_COUNT
     print("第%d次迭代，当前最小值%.4f，当前状态%d" % (ITER_COUNT, f, context))
     ITER_COUNT += 1
+
+
+""" ========== 控制措施函数 ========== """
 
 
 def protect_decay1(t, t0, tm, eta, epsilon=0.001):
@@ -111,35 +235,28 @@ def protect_decay2(t, t0, k):
     return res
 
 
+""" ========== 人口流动函数 ========== """
+
+
 class PmnFunc:
     """
     得到Pmn关于t的函数。即得到每个时间点上的人口流动比例。
     """
-    def __init__(self, pmn, use_mean=False):
+    def __init__(self, pmn):
         """
         pmn是一个dict，其key是date属性，记录的是哪一天，其value是一个ndarray的
         matrix，其第mn个元素表示的是第m个地区迁徙到第n个地区的人口占所有迁出m地区人口
         的比例
         """
         self.pmn = pmn
-        self.use_mean = use_mean
-        if self.use_mean:
-            vv, counts = 0, 0
-            for v in self.pmn.values():
-                vv += v
-                counts += 1
-            self.pmn_mean = vv / counts
-        else:
-            self.pmn_times = list(self.pmn.keys())
-            self.pmn_times_min, self.pmn_times_max = \
-                min(self.pmn_times), max(self.pmn_times)
+        self.pmn_times = list(self.pmn.keys())
+        self.pmn_times_min, self.pmn_times_max = \
+            min(self.pmn_times), max(self.pmn_times)
 
     def __call__(self, ord_time):
         """
         ord_time，相对于t0的相对计时，比如，t0那一天就是0，其后一天是1.
         """
-        if self.use_mean:
-            return self.pmn_mean
         if ord_time <= self.pmn_times_min:
             return self.pmn[self.pmn_times_min]
         elif ord_time >= self.pmn_times_max:
@@ -151,42 +268,7 @@ class PmnFunc:
         return result
 
 
-class PmnFunc2:
-    """
-    得到Pmn关于t的函数。即得到每个时间点上的人口流动比例。
-    """
-    def __init__(self, pmn, use_mean=False):
-        """
-        只考虑湖北的人口迁出
-        """
-        self.pmn = pmn
-        self.use_mean = use_mean
-        if self.use_mean:
-            vv, counts = 0, 0
-            for v in self.pmn.values():
-                vv += v
-                counts += 1
-            self.pmn_mean = vv / counts
-        else:
-            self.pmn_times = list(self.pmn.keys())
-            self.pmn_times_min, self.pmn_times_max = \
-                min(self.pmn_times), max(self.pmn_times)
-
-    def __call__(self, ord_time):
-        """
-        ord_time，相对于t0的相对计时，比如，t0那一天就是0，其后一天是1.
-        """
-        if self.use_mean:
-            return self.pmn_mean
-        if ord_time <= self.pmn_times_min:
-            return self.pmn[self.pmn_times_min]
-        elif ord_time >= self.pmn_times_max:
-            return self.pmn[self.pmn_times_max]
-        else:
-            ord_time_int = int(ord_time)
-            diff = self.pmn[ord_time_int+1] - self.pmn[ord_time_int]
-            result = self.pmn[ord_time_int] + diff * (ord_time - ord_time_int)
-        return result
+""" ========== 人口迁徙比函数 ========== """
 
 
 class GammaFunc1:
@@ -254,6 +336,9 @@ class GammaFunc2:
         return self.gammas
 
 
+""" ========== 导入数据和数据预处理 ========== """
+
+
 class MyArguments(ArgumentParser):
     """ 为了方便，把一些共用的参数放在一起，并集中处理一下"""
     def __init__(self, *args, **kwargs):
@@ -297,27 +382,42 @@ class MyArguments(ArgumentParser):
             else:
                 args.regions = ["湖北", "北京", "上海", "广东", "湖南",
                                 "浙江", "河南", "山东", "黑龙江"]
-        # 将时间都处理成相对于t0的相对时间
-        args.tm_relative = time_str2diff(args.tm, args.t0)
-        args.fit_start_relative = time_str2diff(args.fit_time_start, args.t0)
         return args
 
 
-def parser_key(key):
-    if "[" in key and "]" in key:
-        key1, key2 = key.split("[")
-        key2 = key2[:-1]  # 去掉]
-        if ":" in key2:
-            ind1, ind2 = key2.split(":")
-            slice_ind = slice(int(ind1), int(ind2))
-        else:
-            slice_ind = int(key2)
-    else:
-        key1, slice_ind = key, None
+class Dataset:
 
-    if "-" in key1:
-        key11, key22 = key1.split("-")
-    else:
-        key11, key22 = key1, None
+    def __init__(self, filename, t0, tm, fit_start_t):
 
-    return key11, key22, slice_ind
+        dats = load(filename, "pkl")
+
+        # 重要时间点
+        self.t0 = Time(t0, t0)                              # 疫情开始时间
+        self.protect_t0 = Time(dats["response_time"], t0)   # 防控开始时间，即开始响应的时间
+        self.epi_t0 = Time(dats["epidemic_t0"], t0)         # 第一例疫情确诊时间
+        self.tm = Time(tm, t0)                              # 预测结束时间
+        self.fit_start_t = Time(fit_start_t, t0)            # 使用的数据的开始时间
+        # 重要时间段
+        self.epi_times = Time(                                      # 确诊病例时间段
+            np.arange(self.epi_t0.ord, self.epi_t0.ord+dats["trueH"].shape[0]),
+            t0
+        )
+        self.pred_times = Time(np.arange(0, self.tm.relative), t0)  # 预测时间段
+        self.out20_times = Time(                                    # 迁出人口比时间段
+            np.arange(
+                dats["out_trend_t0"],
+                dats["out_trend_t0"]+dats["out_trend20"].shape[0]
+            ), t0
+        )
+        # 随时间变化的取值，使用以relative为key的dict来表示
+        self.pmn_matrix_relative = {
+            (k-self.t0.ord): v for k, v in dats["pmn"].items()}
+        self.out20_dict = {}
+        for i, t in enumerate(self.out20_times.relative):
+            self.out20_dict[t] = dats["out_trend20"][i, :]
+        # 其他
+        self.regions = dats["regions"]
+        self.populations = dats["population"]
+        self.trueH, self.trueR, self.trueD = dats["trueH"], dats["trueR"], \
+            dats["trueD"]
+        self.num_regions = len(self.regions)

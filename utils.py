@@ -272,7 +272,7 @@ class PmnFunc:
 
 
 class GammaFunc1:
-    def __init__(self, gammas, use_mean=False):
+    def __init__(self, gammas, zero_period=None):
         """
         使用真实的人口迁出比数据（来自百度，但是实际效果不好）
 
@@ -284,31 +284,29 @@ class GammaFunc1:
                 所有时间点上的人口迁出比的均值。
         """
         self.gammas = gammas
-        self.use_mean = use_mean
-        if use_mean:
-            vv, counts = 0, 0
-            for v in self.gammas.values():
-                vv += v
-                counts += 1
-            self.gamma_mean = vv / counts
-        else:
-            self.gamma_times = list(self.gammas.keys())
-            self.gamma_times_min, self.gamma_times_max = \
-                min(self.gamma_times), max(self.gamma_times)
+        self.zero_period = zero_period
+        self.gamma_times = list(self.gammas.keys())
+        self.gamma_times_min, self.gamma_times_max = \
+            min(self.gamma_times), max(self.gamma_times)
 
     def __call__(self, ord_time):
-        if self.use_mean:
-            return self.gamma_mean
+        multi_value = 1
+        if self.zero_period is not None:
+            if (
+                ord_time >= self.zero_period[0] and
+                ord_time <= self.zero_period[1]
+            ):
+                multi_value = 0
         if ord_time <= self.gamma_times_min:
-            return self.gammas[self.gamma_times_min]
+            return self.gammas[self.gamma_times_min] * multi_value
         elif ord_time >= self.gamma_times_max:
-            return self.gammas[self.gamma_times_max]
+            return self.gammas[self.gamma_times_max] * multi_value
         else:
             ord_time_int = int(ord_time)
             diff = self.gammas[ord_time_int+1] - self.gammas[ord_time_int]
             result = self.gammas[ord_time_int] + \
                 diff * (ord_time - ord_time_int)
-        return result
+        return result * multi_value
 
 
 class GammaFunc2:
@@ -347,7 +345,7 @@ class MyArguments(ArgumentParser):
         self.add_argument("--region_type", default="province",
                           choices=("city", "province"))
         self.add_argument(
-            "--model", default="fit",
+            "--model", default=None,
             help=("默认是None，即不使用训练的模型，而是直接使用命令行赋予的参数, "
                   "不然则读取拟合的参数，命令行赋予的参数无效, 如果是fit，"
                   "则取进行自动的拟合")
@@ -409,12 +407,24 @@ class Dataset:
                 dats["out_trend_t0"]+dats["out_trend20"].shape[0]
             ), t0
         )
+        self.out19_times = Time(
+            np.arange(
+                dats["out_trend_t0"],
+                dats["out_trend_t0"]+dats["out_trend19"].shape[0]
+            ), t0
+        )
+        self.zero_period = (
+            Time("2020-01-25", t0), Time("2020-02-01", t0)
+        )
         # 随时间变化的取值，使用以relative为key的dict来表示
         self.pmn_matrix_relative = {
             (k-self.t0.ord): v for k, v in dats["pmn"].items()}
         self.out20_dict = {}
         for i, t in enumerate(self.out20_times.relative):
             self.out20_dict[t] = dats["out_trend20"][i, :]
+        self.out19_dict = {}
+        for i, t in enumerate(self.out19_times.relative):
+            self.out19_dict[t] = dats["out_trend19"][i, :]
         # 其他
         self.regions = dats["regions"]
         self.populations = dats["population"]

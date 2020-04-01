@@ -132,7 +132,7 @@ class NetSEIR(InfectiousBase):
             raise ValueError
 
     def R0(self, ts):
-        raise NotImplementedError
+        return self.alpha_E * self.De + self.alpha_I * self.Di
 
     @property
     def fit_params_info(self):
@@ -154,9 +154,8 @@ def main():
     parser.add_argument("--Di", default=14, type=float)
     parser.add_argument("--alpha_E", default=0.0, type=float)
     parser.add_argument("--alpha_I", default=0.4, type=float)
+    parser.add_argument("--protect_k", default=0.0, type=float)
     args = parser.parse_args()  # 对于一些通用的参数，这里已经进行整理了
-    # 保存args到路径中
-    utils.save(args.__dict__, os.path.join(args.save_dir, "args.json"), "json")
 
     """ 读取准备好的数据 """
     if args.region_type == "city":
@@ -176,7 +175,7 @@ def main():
             protect=True, score_type=args.fit_score,
             protect_args={
                 "t0": dataset.protect_t0.relative,
-                "k": 0.0
+                "k": args.protect_k
             },
             gamma_func_kwargs={
                 # "protect_t0": dataset.protect_t0.relative,
@@ -204,7 +203,8 @@ def main():
                     "method": "geatpy",
                     "fig_dir": args.save_dir+"/",
                     "njobs": -1,
-                    "NIND": 400
+                    "NIND": 400,
+                    # "MAXGEN": 50
                 }
             else:
                 fit_kwargs = {
@@ -272,6 +272,9 @@ def main():
             ],
             save_dir=img_dir
         )
+
+    # 保存args到路径中（所有事情都完成再保存数据，安全）
+    utils.save(args.__dict__, os.path.join(args.save_dir, "args.json"), "json")
 
 
 if __name__ == "__main__":

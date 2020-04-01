@@ -199,6 +199,7 @@ def preprocess_provinces_pmn():
             os.path.join("./DATA/Original/Provinces/", "%s.csv" % prov_name),
             index_col=0
         )
+        dat.rename(columns={"target_province": "target"}, inplace=True)
         dat = dat.loc[dat.source == prov_name, :]
         dat.loc[:, "time"] = dat.time.map(lambda x: parse(x).toordinal())
         dat.loc[:, "value"] = dat.value.map(lambda x: float(x.strip()[:-1]))

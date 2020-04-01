@@ -1,14 +1,12 @@
 import inspect
+from copy import deepcopy
 
-from scipy import integrate, optimize
-from sko.DE import DE
-from skopt import gp_minimize
+import numpy as np
+from scipy import integrate
+from scipy.optimize import dual_annealing
 
 import utils
 from geatyAlg import geaty_func
-
-
-_fit_count = 0
 
 
 class InfectiousBase:
@@ -27,10 +25,10 @@ class InfectiousBase:
 
     def __init__(self, *args, **kwargs):
         """
-        注意，实例化子类的时候，记得把所有的参数都放到super().__init__()中，这样可以自动
-        记忆所有的参数，便于之后保存和读取的时候使用
+        接受的是子类初始化时的参数，会将其全部设为实例属性，并保存到kwargs属性中，便于之后保存
+        和读取时使用
         """
-        self.rtol, self.atol = 1e-8, 1e-8
+        self.rtol, self.atol = 1e-8, 1e-8  # 1e-5会出现问题
         # 将子类所有的参数都记录到属性kwargs中
         sig = inspect.signature(self.__init__)
         arg_names = list(sig.parameters.keys())
@@ -43,83 +41,212 @@ class InfectiousBase:
 
     def __call__(self, t, vars):
         """
-        这里实现的是微分方程组标准形式的右侧部分。
-        用于输入到`solve_ivp`中进行求解
-        """
-        raise NotImplementedError
+        实现微分方程标准形式的右侧部分，用于输入到solve_ivp中进行求解
 
-    def score(self, times, trues, mask=None):
-        """
-        输出评价指标，参数times是时间点，trues是真实的每个时间点上的值，
-        ndarray
+        Arguments:
+            t {float} -- 时间
+            vars {ndarray} -- 当前时间点上的值，shape等于方程的数量
+
+        Raises:
+            NotImplementedError
+
+        Returns:
+            ndarray -- 当前各个值的导数
         """
         raise NotImplementedError
 
     def predict(self, times):
         """
-        输入想要预测的时间点，得到其预测值
-        需要是ndarray
-        返回的是ndarray, dim = len(times) * len(vars)
-        注意，这里得到的是所有预测值，一般来说，还需要在子类中对其进行进一步的封装
+        预测，这里得到的是所有预测值，一般来说，还需要在子类中对其进行进一步的封装和分类
+
+        Arguments:
+            times {ndarray} -- 想要计算的时间点
+
+        Returns:
+            ndarray -- shape=(n_times, n_equ)
         """
         t_span = (0, times.max())
         results = integrate.solve_ivp(
             self, t_span=t_span, y0=self.y0,
-            t_eval=times, rtol=self.rtol, atol=self.atol
+            t_eval=times, rtol=self.rtol, atol=self.atol,
+            # method="RK23"
         )
         return results.y.T
 
-    @property
-    def R(self):
+    def score(self, times, trues, mask=None):
         """
-        估计基本再生数
+        评价指标
+
+        Arguments:
+            times {ndarray} -- 时间点
+            trues {ndarray} -- 对应时间点上的真实值
+
+        Keyword Arguments:
+            mask {ndarray} -- 掩模，其=0或=False的地方会覆盖掉times和trues，被覆盖掉的
+                值不会参与计算 (default: {None})
+
+        Raises:
+            NotImplementedError: [description]
+
+        Returns:
+            float -- 评价得分，越小越好
         """
         raise NotImplementedError
 
+    @property
+    def R(self):
+        """ 估计基本再生数 """
+        raise NotImplementedError
+
     def save(self, filename):
-        """ 保存参数, 使用pkl可以保存ndarray """
+        """
+        保存
+
+        Arguments:
+            filename {str} -- 保存的地址
+        """
         utils.save(self.kwargs, filename, "pkl")
 
     @classmethod
     def load(cls, filename):
+        """
+        载入模型
+
+        Arguments:
+            filename {str} -- 载入保存的模型或模型列表
+
+        Returns:
+            Infectious or list -- 重新实例化的模型或模型列表
+        """
         configs = utils.load(filename, "pkl")
-        return cls(**configs)
+        if isinstance(configs, dict):
+            return cls(**configs)
+        elif isinstance(configs, list):
+            return [cls(**config) for config in configs]
+        else:
+            raise ValueError
+
+    @property
+    def fit_params_info(self):
+        """
+        1. 这里记录我们需要更新的参数的信息，如果想要变换我们更新的参数，就在这里更改，来方便
+        程序的实验。
+        2. 这里使用OrderDict进行记录，键为其对应的属性名，而值是这个参数的(维度, 下限，上限)
+        3. 如果key使用A-B的格式，则这里表示的是self.A["B"]的值
+        4. 如果key中在最后有[n1:n2]的字样，则表示当前要将params赋值到该参数的n1:n2切片上，
+            当然，也可以是[n1]表示单个值的定位
+        5. 可以选择性的在value最后再跟一个列表，其中每个元素对应的是当前参数的解释，可以在打印
+            信息的时候使用
+
+        Raises:
+            NotImplementedError: [description]
+        """
+        raise NotImplementedError
+
+    def fit_params_range(self):
+        """
+        得到所有需要拟合参数的维度、拟合范围
+
+        Returns:
+            (int, ndarray, ndarray) -- 参数向量维度、拟合下限，拟合上限（包含这个界限）
+        """
+        num_params, lb, ub = 0, [], []
+        for vs in self.fit_params_info.values():
+            n, l, u = vs[:3]
+            num_params += n
+            lb.extend([l] * n)
+            ub.extend([u] * n)
+        return num_params, np.array(lb), np.array(ub)
+
+    def set_params(self, params):
+        """
+        将params向量中储存的拟合参数信息整合到模型中
+
+        Arguments:
+            params {ndarray} -- shape = 所有参数的总和
+        """
+        i = 0
+        for k, v in self.fit_params_info.items():
+            key1, key2, ind = utils.parser_key(k)
+            if key2 is not None:
+                if ind is not None:
+                    self.kwargs[key1][key2][ind] = params[i:(i+v[0])]
+                else:
+                    self.kwargs[key1][key2] = params[i:(i+v[0])]
+            else:
+                if ind is not None:
+                    self.kwargs[key1][ind] = params[i:(i+v[0])]
+                else:
+                    self.kwargs[key1] = params[i:(i+v[0])]
+            i += v[0]
+        self.__init__(**self.kwargs)
 
 
-def find_best(score_func, x0, fit_method="geatpy"):
-    # 根据不同的方法进行拟合参数
-    if fit_method == "scipy-NM":
-        opt_res = optimize.minimize(
-            score_func, x0,
-            method="Nelder-Mead", callback=NM_callback,
-            options={"disp": False, "adaptive": True})
-        best_x = opt_res.x
-    elif fit_method == "scikit-optimize":
-        opt_res = gp_minimize(
-            score_func, dimensions=x0, verbose=True, n_calls=100)
-        best_x = opt_res.x
-    elif fit_method == "scikit-opt":
-        opt_res = DE(
-            score_func, n_dim=x0[0],
-            size_pop=500, max_iter=1000,
-            lb=x0[1], ub=x0[2]
-        )
-        best_x, _ = opt_res.run()
-    elif fit_method == "geatpy":
+def score_func(params, model, score_kwargs):
+    """
+    得到对应参数的得分
+
+    Arguments:
+        params {ndarray} -- 当前参数组成的ndarray，shape=(参数量,)
+        model {Infectious实例} -- 需要拟合的模型
+        score_kwargs {dict} -- model.score方法需要的一些参数
+
+    Returns:
+        float -- 评价得分
+    """
+    model_copy = deepcopy(model)  # copy一下，防止在多进程时造成数据的错误
+    model_copy.set_params(params)
+    return model_copy.score(**score_kwargs)
+
+
+def find_best(func, dim, lb, ub, method="geatpy", **kwargs):
+    """
+    寻找当前函数的最小值对应的参数
+
+    Arguments:
+        func {callable} -- 单输入函数，返回float
+        dim {int} -- 拟合参数数量
+        lb {ndarray} -- 各个参数的下限
+        ub {ndarray} -- 各个参数的上限
+
+    Keyword Arguments:
+        method {str} -- [description] (default: {"geatpy"})
+        kwargs -- 各个最优化方法需要的其他参数
+
+    Raises:
+        NotImplementedError: [description]
+
+    Returns:
+        dict -- opt_res，不同的方法内容不同，但都有一个BestParams，其中的内容是一个
+            ndarray，表示找到的最优参数
+    """
+    if method == "geatpy":
         opt_res = geaty_func(
-            score_func, x0[0], x0[1], x0[2],
-            NIND=400, MAXGEN=25
+            func, dim=dim, lb=lb, ub=ub,
+            **kwargs,
+            # Encoding="BG", NIND=400, MAXGEN=25,
+            # fig_dir=save_dir+"/", njobs=1
         )
-        best_x = opt_res["BestParam"]
-    return best_x, opt_res
+    elif method == "annealing":
+        opt_res_1 = dual_annealing(
+            func, np.stack([lb, ub], axis=1),
+            **kwargs,
+            # maxiter=1000,
+            # callback=utils.callback
+        )
+        opt_res = {"all": opt_res_1, "BestParam": opt_res_1.x}
+    else:
+        raise NotImplementedError
+    return opt_res
 
 
-def NM_callback(self, Xi):
-    global _fit_count
-    if _fit_count == 0:
-        print("%4s   %9s   %9s   %9s" % ("Iter", "alpha_E", "alpha_I", "k"))
-    print(
-        "%4d   %3.6f   %3.6f   %3.6f" %
-        (self._fit_count, Xi[0], Xi[1], Xi[2])
-    )
-    _fit_count += 1
+def save_models(models, filename):
+    """
+    保存模型组成的list
+
+    Arguments:
+        models {list} -- 里面每个元素是一个Infectious模型
+        filename {str} -- 保存的文件名
+    """
+    kwarg_list = [model.kwargs for model in models]
+    utils.save(kwarg_list, filename)

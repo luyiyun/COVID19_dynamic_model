@@ -56,7 +56,7 @@ def main():
         out_dict = getattr(dataset, "out%s_dict" % out_rate)
         # 是否春节期间迁出率设为0
         if outIsToZeroInSpring:
-            zero_period = [tm.relative for tm in dataset.zero_period]
+            zero_period = dataset.zero_period.delta
         else:
             zero_period = None
         # 使用不同的潜伏期
@@ -69,18 +69,18 @@ def main():
         model = NetSEIR(
             De=De, Di=Di, populations=dataset.populations,
             y0for1=y0, alpha_I=alpha_I, alpha_E=0.0, protect=True,
-            protect_args={"t0": dataset.protect_t0.relative, "k": k},
+            protect_args={"t0": dataset.protect_t0.delta, "k": k},
             gamma_func_kwargs={"gammas": out_dict, "zero_period": zero_period},
             Pmn_func_kwargs={"pmn": dataset.pmn_matrix_relative}
         )
         # 预测结果
-        prot_preds = model.predict(dataset.pred_times.relative)
+        prot_preds = model.predict(dataset.pred_times.delta)
         model.protect = False
-        nopr_preds = model.predict(dataset.pred_times.relative)
+        nopr_preds = model.predict(dataset.pred_times.delta)
         # 计算每个地区的曲线下面积以及面积差,并保存
         auc = under_area(
-            dataset.epi_times.relative, dataset.trueH,
-            dataset.pred_times.relative, nopr_preds[2]
+            dataset.epi_times.delta, dataset.trueH,
+            dataset.pred_times.delta, nopr_preds[2]
         )
         auc_df = pd.DataFrame(
             auc.T, columns=["true_area", "pred_area", "diff_area"],
@@ -97,16 +97,24 @@ def main():
             plot_one_regions(
                 reg,
                 [
-                    ("true", dataset.epi_times.ord, dataset.trueH[:, i], "ro"),
-                    ("predI", dataset.pred_times.ord, prot_preds[2][:, i], "r"),
-                    ("predE", dataset.pred_times.ord, prot_preds[1][:, i], "y"),
-                    ("predR", dataset.pred_times.ord, prot_preds[3][:, i], "b")
+                    ("true", dataset.epi_times.ord.astype("int"),
+                     dataset.trueH[:, i], "ro"),
+                    ("predI", dataset.pred_times.ord.astype("int"),
+                     prot_preds[2][:, i], "r"),
+                    ("predE", dataset.pred_times.ord.astype("int"),
+                     prot_preds[1][:, i], "y"),
+                    ("predR", dataset.pred_times.ord.astype("int"),
+                     prot_preds[3][:, i], "b")
                 ],
                 [
-                    ("true", dataset.epi_times.ord, dataset.trueH[:, i], "ro"),
-                    ("predI", dataset.pred_times.ord, nopr_preds[2][:, i], "r"),
-                    ("predE", dataset.pred_times.ord, nopr_preds[1][:, i], "y"),
-                    ("predR", dataset.pred_times.ord, nopr_preds[3][:, i], "b")
+                    ("true", dataset.epi_times.ord.astype("int"),
+                     dataset.trueH[:, i], "ro"),
+                    ("predI", dataset.pred_times.ord.astype("int"),
+                     nopr_preds[2][:, i], "r"),
+                    ("predE", dataset.pred_times.ord.astype("int"),
+                     nopr_preds[1][:, i], "y"),
+                    ("predR", dataset.pred_times.ord.astype("int"),
+                     nopr_preds[3][:, i], "b")
                 ],
                 save_dir=img_dir
             )

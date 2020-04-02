@@ -1,7 +1,8 @@
 import os
-from datetime import date
+from datetime import date, timedelta
 import pickle
 import json
+from collections.abc import Sequence
 
 import numpy as np
 from scipy import sparse
@@ -12,34 +13,6 @@ ITER_COUNT = 0
 
 
 """ ========== 辅助函数 ========== """
-
-
-def clear_time(times):
-    """
-    将xxxx-xx-xx格式转换成Date对象
-
-    Arguments:
-        times {list of str} -- xxxx-xx-xx字符串组成的列表
-
-    Returns:
-        list of Date -- Date组成的列表
-    """
-    need_times = [date.fromisoformat(t.strip()) for t in times]
-    return need_times
-
-
-def clear_value(values):
-    """
-    xx% --> float(xx)
-
-    Arguments:
-        values {list of str} -- xx%组成的字符串列表
-
-    Returns:
-        list of float -- float列表
-    """
-    """ 将百分比字符串变成float """
-    return [float(v.strip()[:-1]) for v in values]
 
 
 def df_to_mat(df, shape, source="source", target="target", values="value"):
@@ -63,49 +36,6 @@ def df_to_mat(df, shape, source="source", target="target", values="value"):
         shape=shape
     )
     return np.array(smat.todense())  # np.array将matrix变成array，不然ode会出错
-
-
-def time_str2ord(t):
-    """
-    xxxx-xx-xx --> ordinal format
-
-    Arguments:
-        t {str} -- xxxx-xx-xx format
-
-    Returns:
-        int -- ordinal format
-    """
-    return date.fromisoformat(t).toordinal()
-
-
-def time_date2diff(t, t0):
-    """
-    Date对象 --> 相对于t0过了多少天
-
-    Arguments:
-        t {Date} -- Date对象
-        t0 {str} -- xxxx-xx-xx format, 起始时间
-
-    Returns:
-        int -- 相对时间
-    """
-    return t.toordinal() - time_str2ord(t0)
-
-
-def time_str2diff(t, t0=None):
-    """
-    xxxx-xx-xx --> 相对于t0过了多少天
-
-    Arguments:
-        t {str} -- xxxx-xx-xx format
-        t0 {str} -- xxxx-xx-xx format, 起始时间
-
-    Returns:
-        int -- 相对时间
-    """
-    t_ord = time_str2ord(t)
-    t0_ord = time_str2ord(t0)
-    return t_ord - t0_ord
 
 
 def save(obj, filename, type="pkl"):
@@ -151,52 +81,299 @@ def parser_key(key):
     return key11, key22, slice_ind
 
 
-class Time:
-    _threshold = date.fromisoformat("2000-01-01").toordinal()
+""" ========== 时间相关 ========== """
 
-    def __init__(self, tim, t0):
-        self.t0 = t0
-        self.t0_ord = time_str2ord(t0)
-        if isinstance(tim, (tuple, list, np.ndarray)):
-            test_elem = tim[0]
-            self.isSeq = True
-        else:
-            test_elem = tim
-            self.isSeq = False
-        if isinstance(test_elem, str):
-            self.init_from_str(tim)
-        elif test_elem > self._threshold:
-            self.init_from_ord(tim)
-        else:
-            self.init_from_rel(tim)
 
-    def init_from_str(self, strfmt):
-        self.str = strfmt
-        if self.isSeq:
-            self.ord = np.array([time_str2ord(s) for s in strfmt])
-            self.relative = np.array([
-                time_str2diff(s, self.t0) for s in strfmt])
-        else:
-            self.ord = time_str2ord(strfmt)
-            self.relative = time_str2diff(strfmt, self.t0)
+# def clear_time(times):
+#     """
+#     将xxxx-xx-xx格式转换成Date对象
 
-    def init_from_ord(self, ord):
-        self.ord = ord
-        if self.isSeq:
-            self.str = [str(date.fromordinal(o)) for o in ord]
-            self.relative = np.array([o - self.t0_ord for o in ord])
-        else:
-            self.str = str(date.fromordinal(ord))
-            self.relative = ord - self.t0_ord
+#     Arguments:
+#         times {list of str} -- xxxx-xx-xx字符串组成的列表
 
-    def init_from_rel(self, rel):
-        self.relative = rel
-        if self.isSeq:
-            self.ord = np.array([r + self.t0_ord for r in rel])
-            self.str = [str(date.fromordinal(o)) for o in self.ord]
+#     Returns:
+#         list of Date -- Date组成的列表
+#     """
+#     need_times = [date.fromisoformat(t.strip()) for t in times]
+#     return need_times
+
+
+# def clear_value(values):
+#     """
+#     xx% --> float(xx)
+
+#     Arguments:
+#         values {list of str} -- xx%组成的字符串列表
+
+#     Returns:
+#         list of float -- float列表
+#     """
+#     """ 将百分比字符串变成float """
+#     return [float(v.strip()[:-1]) for v in values]
+
+
+# def time_str2ord(t):
+#     """
+#     xxxx-xx-xx --> ordinal format
+
+#     Arguments:
+#         t {str} -- xxxx-xx-xx format
+
+#     Returns:
+#         int -- ordinal format
+#     """
+#     return date.fromisoformat(t).toordinal()
+
+
+# def time_date2diff(t, t0):
+#     """
+#     Date对象 --> 相对于t0过了多少天
+
+#     Arguments:
+#         t {Date} -- Date对象
+#         t0 {str} -- xxxx-xx-xx format, 起始时间
+
+#     Returns:
+#         int -- 相对时间
+#     """
+#     return t.toordinal() - time_str2ord(t0)
+
+
+# def time_str2diff(t, t0=None):
+#     """
+#     xxxx-xx-xx --> 相对于t0过了多少天
+
+#     Arguments:
+#         t {str} -- xxxx-xx-xx format
+#         t0 {str} -- xxxx-xx-xx format, 起始时间
+
+#     Returns:
+#         int -- 相对时间
+#     """
+#     t_ord = time_str2ord(t)
+#     t0_ord = time_str2ord(t0)
+#     return t_ord - t0_ord
+
+
+# class Time:
+#     _threshold = date.fromisoformat("2000-01-01").toordinal()
+
+#     def __init__(self, tim, t0):
+#         self.t0 = t0
+#         self.t0_ord = time_str2ord(t0)
+#         if isinstance(tim, (tuple, list, np.ndarray)):
+#             test_elem = tim[0]
+#             self.isSeq = True
+#         else:
+#             test_elem = tim
+#             self.isSeq = False
+#         if isinstance(test_elem, str):
+#             self.init_from_str(tim)
+#         elif test_elem > self._threshold:
+#             self.init_from_ord(tim)
+#         else:
+#             self.init_from_rel(tim)
+
+#     def init_from_str(self, strfmt):
+#         self.str = strfmt
+#         if self.isSeq:
+#             self.ord = np.array([time_str2ord(s) for s in strfmt])
+#             self.relative = np.array([
+#                 time_str2diff(s, self.t0) for s in strfmt])
+#         else:
+#             self.ord = time_str2ord(strfmt)
+#             self.relative = time_str2diff(strfmt, self.t0)
+
+#     def init_from_ord(self, ord):
+#         self.ord = ord
+#         if self.isSeq:
+#             self.str = [str(date.fromordinal(o)) for o in ord]
+#             self.relative = np.array([o - self.t0_ord for o in ord])
+#         else:
+#             self.str = str(date.fromordinal(ord))
+#             self.relative = ord - self.t0_ord
+
+#     def init_from_rel(self, rel):
+#         self.relative = rel
+#         if self.isSeq:
+#             self.ord = np.array([r + self.t0_ord for r in rel])
+#             self.str = [str(date.fromordinal(o)) for o in self.ord]
+#         else:
+#             self.ord = rel + self.t0_ord
+#             self.str = str(date.fromordinal(self.ord))
+
+
+class CustomDate:
+    """
+    用来表示日期的类，用来表示单个日期。
+    - 主要功能有：
+        1. 实例化时，增加了t0参数，即表示起始时间。如果此参数为None，没有影响，如果此参数
+            不为None，则会另外计算一个delta属性，为当前时间点到t0的距离（int）；
+        2. 转换为ord格式（ord）、转换为str格式（str（d）,str）；
+        3. 可以进行+（int或timedelta，返回CustomDate）、-（
+            int或timedelta，返回CustomDate；CustomDate或date则返回int）
+    """
+    def __init__(self, t, t0=None):
+        self.t, self.t0 = t, t0
+        if isinstance(t, date):
+            self._t = t
+        elif isinstance(t, str):
+            self._t = date.fromisoformat(t)
+        elif isinstance(t, int):
+            self._t = date.fromordinal(t)
+        elif isinstance(t, (float, np.number)):
+            self._t = date.fromordinal(int(t))
         else:
-            self.ord = rel + self.t0_ord
-            self.str = str(date.fromordinal(self.ord))
+            raise NotImplementedError
+        if t0 is not None:
+            if isinstance(t0, self.__class__):
+                self._t0 = t0._t
+            elif isinstance(t0, str):
+                self._t0 = date.fromisoformat(t0)
+            elif isinstance(t0, date):
+                self._t0 = t0
+            elif isinstance(t, int):
+                self._t0 = date.fromordinal(t0)
+            elif isinstance(t, (float, np.number)):
+                self._t0 = date.fromordinal(int(t0))
+            else:
+                raise NotImplementedError
+            self._timedelta = (self._t - self._t0).days
+        else:
+            self._timedelta = None
+
+    def __add__(self, other):
+        """ 返回的是CustomDate对象或CustomDates对象 """
+        if isinstance(other, timedelta):
+            return self.__class__(self._t + other, self.t0)
+        elif isinstance(other, int):
+            return self.__add__(timedelta(other))
+        elif isinstance(other, (float, np.number)):
+            return self.__add__(int(other))
+        elif isinstance(other, (list, np.ndarray)):
+            return CustomDates([self.__add__(i) for i in other])
+        else:
+            raise ValueError(
+                "A + B, B must be CustomDate, timedelta or its seq.")
+
+    def __sub__(self, other):
+        """
+        如果减去的是CustomDate或date对象，返回的是int；
+        如果减去的是int或timedelta，则返回CustomDate对象；
+        """
+        if isinstance(other, date):
+            return (self._t - other).days
+        elif isinstance(other, self.__class__):
+            return self.__sub__(other._t)
+        elif isinstance(other, timedelta):
+            return self.__class__(self._t - other, self.t0)
+        elif isinstance(other, int):
+            return self.__sub__(timedelta(days=other))
+        elif isinstance(other, (float, np.number)):
+            return self.__sub__(int(other))
+        else:
+            raise ValueError(
+                "A - B, B must be one of CustomDate, date, int and timedelta.")
+
+    def __str__(self):
+        return str(self._t)
+
+    def __repr__(self):
+        return "%s, delta: %s" % (self.__str__(), str(self.delta))
+
+    @property
+    def ord(self):
+        return np.float(self._t.toordinal())
+
+    @property
+    def str(self):
+        return str(self._t)
+
+    @property
+    def delta(self):
+        return np.nan if self._timedelta is None else np.float(self._timedelta)
+
+    @staticmethod
+    def from_delta(delta, t0):
+        return CustomDate(t0, t0) + delta
+
+
+class CustomDates(Sequence):
+    """
+    上面那个类的复数版本，支持整体的+/-
+    """
+    def __init__(self, ts):
+        super().__init__()
+        for t in ts:
+            if not isinstance(t, CustomDate):
+                raise ValueError("element of ts must be CustomDate.")
+        self._ts = ts
+
+    def __len__(self):
+        return len(self._ts)
+
+    def __getitem__(self, index):
+        return self._ts[index]
+
+    def __add__(self, other):
+        if isinstance(other, (list, np.ndarray)):
+            assert self.__len__() == len(other)
+            res = self.__class__([t1 + t2 for t1, t2 in zip(self._ts, other)])
+        else:
+            res = self.__class__([t + other for t in self._ts])
+        if all([isinstance(r, CustomDate) for r in res]):
+            return self.__class__(res)
+        elif all([isinstance(r, (int, None)) for r in res]):
+            return np.array(res).astype("float")
+        else:
+            return res
+
+    def __sub__(self, other):
+        if isinstance(other, (list, np.ndarray, CustomDates)):
+            assert self.__len__() == len(other)
+            res = [t1 - t2 for t1, t2 in zip(self._ts, other)]
+        else:
+            res = [t - other for t in self._ts]
+        if all([isinstance(r, CustomDate) for r in res]):
+            return self.__class__(res)
+        elif all([isinstance(r, (int, None)) for r in res]):
+            return np.array(res).astype("float")
+        else:
+            return res
+
+    def __str__(self):
+        return [str(t) for t in self._ts]
+
+    def __repr__(self):
+        return "\n".join([t.__repr__() for t in self._ts])
+
+    @property
+    def str(self):
+        return self.__str__()
+
+    @property
+    def ord(self):
+        return np.array([t.ord for t in self._ts])
+
+    @property
+    def delta(self):
+        return np.array([t.delta for t in self._ts])
+
+    @staticmethod
+    def from_range(start, stop, t0=None):
+        """ 这里得到的CustomDates是包含stop那一天的 """
+        if isinstance(start, str):
+            start = date.fromisoformat(start).toordinal()
+        elif not isinstance(start, int):
+            raise ValueError("start must be ordinal or xxxx-xx-xx.")
+        if isinstance(stop, str):
+            stop = date.fromisoformat(stop).toordinal()
+        elif not isinstance(stop, int):
+            raise ValueError("stop must be ordinal or xxxx-xx-xx.")
+        return CustomDates([
+            CustomDate(i, t0)
+            for i in range(start, stop+1)
+        ])
 
 
 """ ========== 回调函数，用于annealing fit方法 ========== """
@@ -244,7 +421,7 @@ class PmnFunc:
     """
     def __init__(self, pmn):
         """
-        pmn是一个dict，其key是date属性，记录的是哪一天，其value是一个ndarray的
+        pmn是一个dict，其key是time delta，记录的是哪一天，其value是一个ndarray的
         matrix，其第mn个元素表示的是第m个地区迁徙到第n个地区的人口占所有迁出m地区人口
         的比例
         """
@@ -339,47 +516,35 @@ class GammaFunc2:
 
 class MyArguments(ArgumentParser):
     """ 为了方便，把一些共用的参数放在一起，并集中处理一下"""
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, save_root_dir="./RESULTS2/", **kwargs):
         super().__init__(*args, **kwargs)
         self.add_argument("--save_dir")
-        self.add_argument("--region_type", default="province",
-                          choices=("city", "province"))
+        # self.add_argument("--region_type", default="province",
+        #                   choices=("city", "province"))
         self.add_argument(
             "--model", default=None,
             help=("默认是None，即不使用训练的模型，而是直接使用命令行赋予的参数, "
                   "不然则读取拟合的参数，命令行赋予的参数无效, 如果是fit，"
                   "则取进行自动的拟合")
         )
-        self.add_argument(
-            "--regions", default=None, nargs="+",
-            help=("默认是None，则对于省份或城市都使用不同的默认值，不然，则需要键入需要估"
-                  "计的地区名。如果是all，则将所有的都计算一下看看")
-        )
-        self.add_argument("--t0", default="2019-12-31", help="疫情开始的那天")
-        self.add_argument("--y0", default=100, type=float,
+        self.add_argument("--t0", default="2019-12-01", help="疫情开始的那天")
+        self.add_argument("--y0", default=1, type=float,
                           help="武汉或湖北在t0那天的感染人数")
-        self.add_argument("--tm", default="2020-03-31", help="需要预测到哪天")
-        self.add_argument("--protect_args", default=[0], type=float, nargs="+")
-        self.add_argument("--fit_score", default="nll", choices=["nll", "mse"])
+        self.add_argument("--tm", default="2020-04-30", help="需要预测到哪天")
+        self.add_argument("--fit_score", default="nll",
+                          choices=["nll", "mse", "mae"])
         self.add_argument("--fit_time_start", default="2020-02-01")
         self.add_argument("--use_whhb", action="store_true")
         self.add_argument("--fit_method", default="geatpy",
                           choices=["geatpy", "annealing"])
 
+        self.save_root_dir = save_root_dir
+
     def parse_args(self):
         args = super().parse_args()
-        args.save_dir = os.path.join("./RESULTS2/", args.save_dir)
+        args.save_dir = os.path.join(self.save_root_dir, args.save_dir)
         if not os.path.exists(args.save_dir):
             os.mkdir(args.save_dir)
-        if args.regions is None:
-            if args.region_type == "city":
-                args.regions = [
-                    "武汉", "孝感", "荆州", "荆门", "随州", "黄石", "宜昌",
-                    "鄂州", "北京", "上海", "哈尔滨", "淄博"
-                ]
-            else:
-                args.regions = ["湖北", "北京", "上海", "广东", "湖南",
-                                "浙江", "河南", "山东", "黑龙江"]
         return args
 
 
@@ -390,40 +555,33 @@ class Dataset:
         dats = load(filename, "pkl")
 
         # 重要时间点
-        self.t0 = Time(t0, t0)                              # 疫情开始时间
-        self.protect_t0 = Time(dats["response_time"], t0)   # 防控开始时间，即开始响应的时间
-        self.epi_t0 = Time(dats["epidemic_t0"], t0)         # 第一例疫情确诊时间
-        self.tm = Time(tm, t0)                              # 预测结束时间
-        self.fit_start_t = Time(fit_start_t, t0)            # 使用的数据的开始时间
+        self.t0 = CustomDate(t0, t0)               # 疫情开始时间
+        self.protect_t0 = CustomDates([            # 防控开始时间，即开始响应的时间
+            CustomDate(d, t0)
+            for d in dats["response_time"]
+        ])
+        self.epi_t0 = CustomDate(dats["epidemic_t0"], t0)    # 第一例疫情确诊时间
+        self.tm = CustomDate(tm, t0)                         # 预测结束时间
+        self.fit_start_t = CustomDate(fit_start_t, t0)       # 使用的数据的开始时间
         # 重要时间段
-        self.epi_times = Time(                                      # 确诊病例时间段
-            np.arange(self.epi_t0.ord, self.epi_t0.ord+dats["trueH"].shape[0]),
-            t0
+        self.epi_times = self.epi_t0 + \
+            np.arange(dats["epi_times"])                     # 确诊病例时间段
+        self.pred_times = CustomDates.from_range(t0, tm, t0)   # 预测时间段
+        self.out20_times = CustomDate(dats["out_trend_t0"], t0) +\
+            np.arange(dats["out_trend20"].shape[0])            # 迁出人口比时间段
+        self.out19_times = CustomDate(dats["out_trend_t0"], t0) +\
+            np.arange(dats["out_trend19"].shape[0])       # 迁出人口比时间段
+        self.zero_period = CustomDates.from_range(        # 春节，人口流动可以设为0
+            "2020-01-25", "2020-02-01", t0=t0
         )
-        self.pred_times = Time(np.arange(0, self.tm.relative), t0)  # 预测时间段
-        self.out20_times = Time(                                    # 迁出人口比时间段
-            np.arange(
-                dats["out_trend_t0"],
-                dats["out_trend_t0"]+dats["out_trend20"].shape[0]
-            ), t0
-        )
-        self.out19_times = Time(
-            np.arange(
-                dats["out_trend_t0"],
-                dats["out_trend_t0"]+dats["out_trend19"].shape[0]
-            ), t0
-        )
-        self.zero_period = (
-            Time("2020-01-25", t0), Time("2020-02-01", t0)
-        )
-        # 随时间变化的取值，使用以relative为key的dict来表示
+        # 随时间变化的取值，date delta为key的dict来表示
         self.pmn_matrix_relative = {
-            (k-self.t0.ord): v for k, v in dats["pmn"].items()}
+            CustomDate(k, t0).delta: v for k, v in dats["pmn"].items()}
         self.out20_dict = {}
-        for i, t in enumerate(self.out20_times.relative):
+        for i, t in enumerate(self.out20_times.delta):
             self.out20_dict[t] = dats["out_trend20"][i, :]
         self.out19_dict = {}
-        for i, t in enumerate(self.out19_times.relative):
+        for i, t in enumerate(self.out19_times.delta):
             self.out19_dict[t] = dats["out_trend19"][i, :]
         # 其他
         self.regions = dats["regions"]
@@ -431,3 +589,52 @@ class Dataset:
         self.trueH, self.trueR, self.trueD = dats["trueH"], dats["trueR"], \
             dats["trueD"]
         self.num_regions = len(self.regions)
+
+
+if __name__ == "__main__":
+    """ test CustomDate and CustomDates """
+    if False:
+        a = CustomDate("2020-01-01", "2019-12-01")
+        b = CustomDate("2020-01-10")
+        A = CustomDates([a, b])
+
+        print((a + np.arange(0, 10)).str)
+        print((a + np.arange(0, 10)).delta)
+
+        print(A.str)
+        print(A.ord)
+        print(A.delta)
+
+        print(A - a)
+        print(A - date.fromisoformat("2020-01-01"))
+        print((A - 10).str)
+        print((A - timedelta(10)).str)
+
+        print((A + 10).str)
+        print((A + timedelta(10)).str)
+
+        for i in A:
+            print(i.str)
+
+        B = CustomDates([
+            CustomDate("2019-01-15"),
+            CustomDate("2019-01-16"),
+        ])
+        C = [10, 11]
+        D = [
+            date.fromisoformat("2019-01-15"),
+            date.fromisoformat("2019-01-16")
+        ]
+        E = [timedelta(10), timedelta(11)]
+        F = [10, 11, 12]
+
+        print(A - B)
+        print((A - B).__class__)
+        print((A - C).str)
+        print(A - D)
+        print((A - E).str)
+        print(A - F)
+    if True:
+        dat = Dataset(
+            "./DATA/Provinces.pkl", "2019-12-01", "2020-04-30", "2020-02-01"
+        )

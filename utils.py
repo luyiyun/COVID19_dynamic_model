@@ -535,8 +535,18 @@ class MyArguments(ArgumentParser):
                           choices=["nll", "mse", "mae"])
         self.add_argument("--fit_time_start", default="2020-02-01")
         self.add_argument("--use_whhb", action="store_true")
-        self.add_argument("--fit_method", default="geatpy",
-                          choices=["geatpy", "annealing"])
+        self.add_argument("--fit_method", default="SEGA",
+                          choices=[
+                              "SEGA", "multiSEGA", "psySEGA", "annealing",
+                              "rand1lDE"
+                            ]
+                          )
+        self.add_argument("--geatpy_maxgen", default=25, type=int)
+        self.add_argument("--geatpy_nind", default=500, type=int)
+        self.add_argument(
+            "--geatpy_npop", default=5, type=int,
+            help="种群数量, 只有在使用multiSEGA时才有效"
+        )
 
         self.save_root_dir = save_root_dir
 

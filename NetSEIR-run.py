@@ -24,16 +24,17 @@ def main():
 
     """ Simulation Parameters """
     Dis = [11.5]
-    Des = [5.2]
+    Des = [3]
     y0s = [1]
-    out_rates = ["19", "20"]  # ["19", "20"]
-    outIsToZeroInSprings = [True, False]
+    out_rates = ["20"]  # ["19", "20"]
+    outIsToZeroInSprings = [False]
     R0s = np.linspace(2.2, 6.47, 5)  # np.linspace(2.2, 6.47, 10)
-    ks = [0, 0.25, 0.5]  # np.arange(0, 5, 0.5)
+    ks = [0]  # np.arange(0, 5, 0.5)
 
     """ Read Data and Prepare """
-    root_dir = "./RESULTS/test0329"
+    root_dir = "./RESULTS2/test0806"
     dat_file = "./DATA/Provinces.pkl"
+    plot_index = False
     plt.rcParams["font.sans-serif"] = ["SimHei"]
     dataset = utils.Dataset(
         dat_file, t0="2019-12-01", tm="2020-04-30",
@@ -89,35 +90,37 @@ def main():
         auc_df["population"] = dataset.populations
         auc_df["diff_norm"] = auc_df.diff_area / auc_df.population
         auc_df.sort_values("diff_norm", inplace=True)
+
         # 为每个地区绘制曲线图
-        img_dir = osp.join(save_dir, "imgs")
-        if not osp.exists(img_dir):
-            os.mkdir(img_dir)
-        for i, reg in enumerate(dataset.regions):
-            plot_one_regions(
-                reg,
-                [
-                    ("true", dataset.epi_times.ord.astype("int"),
-                     dataset.trueH[:, i], "ro"),
-                    ("predI", dataset.pred_times.ord.astype("int"),
-                     prot_preds[2][:, i], "r"),
-                    ("predE", dataset.pred_times.ord.astype("int"),
-                     prot_preds[1][:, i], "y"),
-                    ("predR", dataset.pred_times.ord.astype("int"),
-                     prot_preds[3][:, i], "b")
-                ],
-                [
-                    ("true", dataset.epi_times.ord.astype("int"),
-                     dataset.trueH[:, i], "ro"),
-                    ("predI", dataset.pred_times.ord.astype("int"),
-                     nopr_preds[2][:, i], "r"),
-                    ("predE", dataset.pred_times.ord.astype("int"),
-                     nopr_preds[1][:, i], "y"),
-                    ("predR", dataset.pred_times.ord.astype("int"),
-                     nopr_preds[3][:, i], "b")
-                ],
-                save_dir=img_dir
-            )
+        if plot_index:
+            img_dir = osp.join(save_dir, "imgs")
+            if not osp.exists(img_dir):
+                os.mkdir(img_dir)
+            for i, reg in enumerate(dataset.regions):
+                plot_one_regions(
+                    reg,
+                    [
+                        ("true", dataset.epi_times.ord.astype("int"),
+                         dataset.trueH[:, i], "ro"),
+                        ("predI", dataset.pred_times.ord.astype("int"),
+                         prot_preds[2][:, i], "r"),
+                        ("predE", dataset.pred_times.ord.astype("int"),
+                         prot_preds[1][:, i], "y"),
+                        ("predR", dataset.pred_times.ord.astype("int"),
+                         prot_preds[3][:, i], "b")
+                    ],
+                    [
+                        ("true", dataset.epi_times.ord.astype("int"),
+                         dataset.trueH[:, i], "ro"),
+                        ("predI", dataset.pred_times.ord.astype("int"),
+                         nopr_preds[2][:, i], "r"),
+                        ("predE", dataset.pred_times.ord.astype("int"),
+                         nopr_preds[1][:, i], "y"),
+                        ("predR", dataset.pred_times.ord.astype("int"),
+                         nopr_preds[3][:, i], "b")
+                    ],
+                    save_dir=img_dir
+                )
         # 保存结果
         for i, name in enumerate(["predS", "predE", "predI", "predR"]):
             pd.DataFrame(

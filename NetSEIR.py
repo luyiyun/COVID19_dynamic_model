@@ -1,4 +1,5 @@
 import os
+from copy import deepcopy
 from collections import OrderedDict
 
 import numpy as np
@@ -66,6 +67,9 @@ class NetSEIR(InfectiousBase):
             np.zeros(self.num_regions)
         ]
 
+        # 在一级响应之前，允许I的流动，之后截断其流动
+        self.I_flow_func = lambda t: t < self.protect_args["t0"]
+
     def __call__(self, t, SEIR):
         SS = SEIR[:self.num_regions]
         EE = SEIR[self.num_regions:(2*self.num_regions)]
@@ -84,16 +88,19 @@ class NetSEIR(InfectiousBase):
         e2i = self.theta * EE
         i2r = self.beta * II
 
-        pmnt = self.Pmn_func(t)
+        pmnt = self.Pmn_func(t) - np.diag(np.ones(self.num_regions))
         gamma_t = self.gamma_func(t)
         # 这里SS.dot(pmnt)，其运算是将SS看做是1xn维矩阵和pmnt进行的矩阵乘
-        s_out_people = gamma_t * (SS.dot(pmnt) - SS)
-        e_out_people = gamma_t * (EE.dot(pmnt) - EE)
+        # s_out_people = gamma_t * (SS.dot(pmnt) - SS)
+        # e_out_people = gamma_t * (EE.dot(pmnt) - EE)
         # i_out_people = gamma_t * (II.dot(pmnt) - II)
+        s_out_people = (SS * gamma_t).dot(pmnt)
+        e_out_people = (EE * gamma_t).dot(pmnt)
+        i_out_people = (II * gamma_t).dot(pmnt) * self.I_flow_func(t)
 
         delta_s = - s2e_i - s2e_e + s_out_people
         delta_e = s2e_e + s2e_i + e_out_people - e2i
-        delta_i = e2i - i2r  # + i_out_people  # 这里认为出现症状就不乱跑了
+        delta_i = e2i - i2r + i_out_people
         delta_r = i2r
         output = np.r_[delta_s, delta_e, delta_i, delta_r]
         return output
@@ -133,19 +140,57 @@ class NetSEIR(InfectiousBase):
         else:
             raise ValueError
 
-    def R0(self, ts):
-        raise NotImplementedError
-        return self.alpha_E * self.De + self.alpha_I * self.Di
+    def R0(self, ts=None, protect=False, relative=False):
+        """
+        仅计算的是人口流动对R0的影响
+        relative=True则计算的时候会考虑到当前易感人群的比例
+        """
+        if ts is None:
+            ts = list(self.gamma_func.gammas.keys())
+
+        if relative:
+            ss, ee, ii, rr = self.predict(np.array(ts))
+            nn = ss + ee + ii + rr
+            sn = ss / nn
+
+        R0s = []
+        for i, t in enumerate(ts):
+            pmnt = self.Pmn_func(t)
+            gammat = self.gamma_func(t)
+
+            p = pmnt - np.diag(np.ones(self.num_regions))
+            p = np.matmul(p.T, np.diag(gammat))
+
+            A = np.diag(np.full((self.num_regions,), self.theta)) - p
+            A_1 = np.linalg.inv(A)
+            D = np.diag(np.full((self.num_regions,), self.beta)) - p
+            D_1 = np.linalg.inv(D)
+            C_1 = np.matmul(D_1, A_1) * self.theta
+
+            if protect:
+                protect_mat = np.diag(
+                    self.protect_decay(t, **self.protect_args))
+                A_1 = np.matmul(protect_mat, A_1)
+                C_1 = np.matmul(protect_mat, C_1)
+            if relative:
+                sn_mat = np.diag(sn[i])
+                A_1 = np.matmul(sn_mat, A_1)
+                C_1 = np.matmul(sn_mat, C_1)
+
+            G = self.alpha_E * A_1 + self.alpha_I * C_1
+            eigs, _ = np.linalg.eig(G)
+            R0s.append(np.abs(eigs).max())
+        return R0s
 
     @property
     def fit_params_info(self):
         params = OrderedDict()
         # params["alpha_E"] = (1, 0, 0.5)
-        params["alpha_I"] = (1, 0, 0.8)
+        params["alpha_I"] = (31, 0, 0.8)
         # params["protect_args-eta"] = (31, 0, 1)
         # params["protect_args-tm"] = (31, 0, 31)
-        params["protect_args-k"] = (31, 0, 5)
-        params["y0for1"] = (1, 1, 5)
+        # params["protect_args-k"] = (31, 0, 10)
+        # params["y0for1"] = (1, 1, 5)
         return params
 
 
@@ -204,17 +249,18 @@ def main():
                 "mask": mask,
             }
             # 搜索
-            if args.fit_method == "geatpy":
+            if args.fit_method == "annealing":
                 fit_kwargs = {
-                    "method": "geatpy",
-                    "fig_dir": args.save_dir+"/",
-                    "njobs": -1,
-                    "NIND": 500,
-                    "MAXGEN": 100,
+                    "callback": utils.callback, "method": "annealing"
                 }
             else:
                 fit_kwargs = {
-                    "callback": utils.callback, "method": "annealing"
+                    "method": "SEGA",
+                    "fig_dir": args.save_dir+"/",
+                    "njobs": -1,
+                    "NIND": args.geatpy_nind,
+                    "MAXGEN": args.geatpy_maxgen,
+                    "n_populations": args.geatpy_npop
                 }
             dim, lb, ub = model.fit_params_range()
             opt_res = find_best(
@@ -316,8 +362,9 @@ def main():
             index=dataset.epi_times.str
         ).to_csv(os.path.join(args.save_dir, "%s.csv" % attr_name))
     # 保存args到路径中（所有事情都完成再保存数据，安全）
-    utils.save(
-        args.__dict__, os.path.join(args.save_dir, "args.json"), "json")
+    save_args = deepcopy(args.__dict__)
+    save_args["model_type"] = "NetSEIR"
+    utils.save(save_args, os.path.join(args.save_dir, "args.json"), "json")
 
 
 if __name__ == "__main__":

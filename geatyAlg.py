@@ -61,37 +61,9 @@ class MyProblem(ea.Problem):  # 继承Problem父类
         print("第%d代完成" % self.count)
 
 
-class MyAlgorithm(ea.soea_SEGA_templet):
-    """ 基本上就是wrap了一下源代码，只是为了加一个保存图片的路径 """
-    def __init__(self, problem, population, fig_dir):
-        self.fig_dir = fig_dir
-        super().__init__(problem, population)
-
-    def finishing(self, population):
-        # 处理进化记录器
-        delIdx = np.where(np.isnan(self.obj_trace))[0]
-        self.obj_trace = np.delete(self.obj_trace, delIdx, 0)
-        self.var_trace = np.delete(self.var_trace, delIdx, 0)
-        if self.obj_trace.shape[0] == 0:
-            raise RuntimeError(
-                'error: No feasible solution. (有效进化代数为0，没找到可行解。)')
-        self.passTime += time.time() - self.timeSlot  # 更新用时记录
-        # 绘图
-        if self.drawing != 0:
-            ea.trcplot(
-                self.obj_trace,
-                [['种群个体平均目标函数值', '种群最优个体目标函数值']],
-                save_path=self.fig_dir,  # 相比于源代码，改的就是这里
-                xlabels=[['Number of Generation']],
-                ylabels=[['Value']], gridFlags=[[False]]
-            )
-        # 返回最后一代种群、进化记录器、变量记录器以及执行时间
-        return [population, self.obj_trace, self.var_trace]
-
-
 def geaty_func(
-    func, dim, lb, ub, Encoding="BG", NIND=400, MAXGEN=25, fig_dir="",
-    njobs=0
+    func, dim, lb, ub, NIND=400, MAXGEN=25, fig_dir="",
+    njobs=0, method="SEGA", n_populations=5
 ):
     """
     将整个遗传算法过程进行整合，编写成一整个函数，便于之后使用。当前此函数，只能处理参数是连续
@@ -100,11 +72,17 @@ def geaty_func(
         func: 用于最小化的函数。
         dim: 需要优化的params的个数。
         lb，ub：array或list，是params的上下限，这里默认都是闭区间。
-        Encoding: 编码方式
         NIND: 种群规模
         MAXGEN: 最大进化代数
         fig_dir: 保存图片的地址，注意，需要在最后加/
         njobs: 0，1使用单核、否则使用多核，其中-1表示使用所有的核
+        method: 使用的进化算法模板：
+            SEGA：增强精英保留的遗传算法模板
+            multiSEGA：增强精英保留的多种群协同遗传算法
+            psySEGA：增强精英保留的多染色体遗传算法
+            rand1lDE: 差分进化DE/rand/1/L算法
+        n_populations: 如果是multiSEGA，此表示的是种群数量
+
     """
 
     """ 实例化问题对象 """
@@ -112,19 +90,56 @@ def geaty_func(
 
     """ 种群设置 """
     # 创建区域描述器
-    Field = ea.crtfld(
-        Encoding, problem.varTypes, problem.ranges, problem.borders
-    )
+    # (不同的方法使用不同的编码方式)
+    if "DE" in method:
+        Encoding = "RI"
+    else:
+        Encoding = "BG"
     # 实例化种群对象（此时种群还没被初始化，仅仅是完成种群对象的实例化）
-    population = ea.Population(Encoding, Field, NIND)
+    if method == "multiSEGA":
+        one_ind = NIND // n_populations
+        res_ind = NIND % n_populations
+        NINDS = [one_ind] * n_populations
+        NINDS[-1] = NINDS[-1] + res_ind
+        population = []
+        for nind in NINDS:
+            Field = ea.crtfld(
+                Encoding, problem.varTypes, problem.ranges, problem.borders
+            )
+            population.append(ea.Population(Encoding, Field, nind))
+    else:
+        Field = ea.crtfld(
+            Encoding, problem.varTypes, problem.ranges, problem.borders
+        )
+        if method == "psySEGA":
+            raise NotImplementedError
+            population = ea.PsyPopulation([Encoding], [Field], NIND)
+        else:
+            population = ea.Population(Encoding, Field, NIND)
 
     """ 算法参数设置 """
+    if method == "SEGA":
+        algorithm = ea.soea_SEGA_templet
+    elif method == "multiSEGA":
+        algorithm = ea.soea_multi_SEGA_templet
+    elif method == "psySEGA":
+        algorithm = ea.soea_psy_SEGA_templet
+    elif method == "rand1lDE":
+        algorithm = ea.soea_DE_rand_1_L_templet
+    else:
+        raise NotImplementedError
     # 实例化一个算法模板对象
-    myAlgorithm = MyAlgorithm(problem, population, fig_dir)
+    myAlgorithm = algorithm(problem, population)
     # 最大进化代数
     myAlgorithm.MAXGEN = MAXGEN
+    # "进化停滞"判断阈值
+    myAlgorithm.trappedValue = 1e-6
+    # 进化停滞计数器最大上限值，如果连续maxTrappedCount代被判定进化陷入停滞，则终止进化
+    myAlgorithm.maxTrappedCount = 5
     # 控制是否绘制图片
     myAlgorithm.drawing = 1
+    # 控制绘图的路径（自己改的源码）
+    myAlgorithm.drawing_file = fig_dir
 
     """ 调用算法模板进行种群进化 """
     [population, obj_trace, var_trace] = myAlgorithm.run()  # 执行算法模板

@@ -199,7 +199,7 @@ def score_func(params, model, score_kwargs):
     return model_copy.score(**score_kwargs)
 
 
-def find_best(func, dim, lb, ub, method="geatpy", **kwargs):
+def find_best(func, dim, lb, ub, method="SEGA", **kwargs):
     """
     寻找当前函数的最小值对应的参数
 
@@ -210,7 +210,7 @@ def find_best(func, dim, lb, ub, method="geatpy", **kwargs):
         ub {ndarray} -- 各个参数的上限
 
     Keyword Arguments:
-        method {str} -- [description] (default: {"geatpy"})
+        method {str} -- [description] (default: {"SEGA"})
         kwargs -- 各个最优化方法需要的其他参数
 
     Raises:
@@ -220,23 +220,12 @@ def find_best(func, dim, lb, ub, method="geatpy", **kwargs):
         dict -- opt_res，不同的方法内容不同，但都有一个BestParams，其中的内容是一个
             ndarray，表示找到的最优参数
     """
-    if method == "geatpy":
-        opt_res = geaty_func(
-            func, dim=dim, lb=lb, ub=ub,
-            **kwargs,
-            # Encoding="BG", NIND=400, MAXGEN=25,
-            # fig_dir=save_dir+"/", njobs=1
-        )
-    elif method == "annealing":
-        opt_res_1 = dual_annealing(
-            func, np.stack([lb, ub], axis=1),
-            **kwargs,
-            # maxiter=1000,
-            # callback=utils.callback
-        )
+    if method == "annealing":
+        opt_res_1 = dual_annealing(func, np.stack([lb, ub], axis=1), **kwargs)
         opt_res = {"all": opt_res_1, "BestParam": opt_res_1.x}
     else:
-        raise NotImplementedError
+        opt_res = geaty_func(
+            func, dim=dim, lb=lb, ub=ub, method=method, **kwargs)
     return opt_res
 
 

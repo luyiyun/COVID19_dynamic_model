@@ -5,3 +5,4 @@ RESULTS2/
 !.gitignore
 __pycache__/
 *.svg
+test*

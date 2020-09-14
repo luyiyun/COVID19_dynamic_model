@@ -4,6 +4,8 @@ import numpy as np
 import geatpy as ea
 from pathos.multiprocessing import Pool, cpu_count
 
+from utils import load
+
 
 class MyProblem(ea.Problem):  # 继承Problem父类
     def __init__(self, func, dim, lb, ub, njobs=0):
@@ -63,7 +65,7 @@ class MyProblem(ea.Problem):  # 继承Problem父类
 
 def geaty_func(
     func, dim, lb, ub, NIND=400, MAXGEN=25, fig_dir="",
-    njobs=0, method="SEGA", n_populations=5
+    njobs=0, method="SEGA", n_populations=5, opt_res=None
 ):
     """
     将整个遗传算法过程进行整合，编写成一整个函数，便于之后使用。当前此函数，只能处理参数是连续
@@ -91,10 +93,10 @@ def geaty_func(
     """ 种群设置 """
     # 创建区域描述器
     # (不同的方法使用不同的编码方式)
-    if "DE" in method:
-        Encoding = "RI"
-    else:
-        Encoding = "BG"
+    # if "DE" in method:
+    Encoding = "RI"
+    # else:
+    # Encoding = "BG"
     # 实例化种群对象（此时种群还没被初始化，仅仅是完成种群对象的实例化）
     if method == "multiSEGA":
         one_ind = NIND // n_populations
@@ -107,7 +109,24 @@ def geaty_func(
                 Encoding, problem.varTypes, problem.ranges, problem.borders
             )
             population.append(ea.Population(Encoding, Field, nind))
+        # --------------------------------------------
+        # opt_res = load("./RESULTS2/test0418_5/opt_res.pkl")
+        if opt_res is not None:
+            prophetChrom = np.expand_dims(opt_res["BestParam"], axis=0)
+            prophetChrom = np.tile(opt_res["BestParam"], (2, 1))
+            prophetPops = []
+            for i in range(len(population)):
+                prophetPop = ea.Population(Encoding, Field, 2, prophetChrom)
+                prophetPop.Phen = prophetPop.decoding()
+                problem.aimFunc(prophetPop)
+                prophetPops.append(prophetPop)
+        else:
+            prophetPops = None
+        # --------------------------------------------
     else:
+        # --------------------------------------------
+        # prophetPops = None
+        # --------------------------------------------
         Field = ea.crtfld(
             Encoding, problem.varTypes, problem.ranges, problem.borders
         )
@@ -133,16 +152,16 @@ def geaty_func(
     # 最大进化代数
     myAlgorithm.MAXGEN = MAXGEN
     # "进化停滞"判断阈值
-    myAlgorithm.trappedValue = 1e-6
+    # myAlgorithm.trappedValue = 1e-6
     # 进化停滞计数器最大上限值，如果连续maxTrappedCount代被判定进化陷入停滞，则终止进化
-    myAlgorithm.maxTrappedCount = 5
+    # myAlgorithm.maxTrappedCount = 100
     # 控制是否绘制图片
     myAlgorithm.drawing = 1
     # 控制绘图的路径（自己改的源码）
     myAlgorithm.drawing_file = fig_dir
 
     """ 调用算法模板进行种群进化 """
-    [population, obj_trace, var_trace] = myAlgorithm.run()  # 执行算法模板
+    [population, obj_trace, var_trace] = myAlgorithm.run(prophetPops)  # 执行算法模板
     # population.save()  # 把最后一代种群的信息保存到文件中
 
     """ 输出结果 """
@@ -164,5 +183,6 @@ def geaty_func(
         "EvaluationCount": myAlgorithm.evalsNum,
         "PassTime": myAlgorithm.passTime,
         "VarTrace": var_trace,
-        "ObjTrace": obj_trace
+        "ObjTrace": obj_trace,
+        "population": population,
     }

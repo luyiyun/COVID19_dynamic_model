@@ -47,10 +47,13 @@ class NetSEAIRQ(InfectiousBase):
         # 在一级响应之前，允许I的流动，之后截断其流动
         self.I_flow_func = lambda t: t < self.protect_args["t0"]
 
+        self._needRh=False
+
     def __call__(self, t, ALL):
         """
         t是时间参数，
         y0 = [H R E A I Sq Eq] + [S]
+        y0 = [H R E A I Sq Eq] + [S] + [Rh]
         """
         HH = ALL[:self.num_regions]
         RR = ALL[self.num_regions:2*self.num_regions]
@@ -59,14 +62,17 @@ class NetSEAIRQ(InfectiousBase):
         II = ALL[4*self.num_regions:5*self.num_regions]
         SSq = ALL[5*self.num_regions:6*self.num_regions]
         EEq = ALL[6*self.num_regions:7*self.num_regions]
-        SS = ALL[7*self.num_regions:]
+        SS = ALL[7*self.num_regions:8*self.num_regions]
         Nt = HH + RR + EE + AA + II + SSq + EEq + SS
 
         # 如果有保护措施，这里计算受到保护措施影响的c和q
+        # decayc, decayq = self.protect_decay(t, **self.protect_args)
         if self.protect:
             decayc, decayq = self.protect_decay(t, **self.protect_args)
             ci, qi = self.c * decayc, self.q * decayq  # + 效果不好，还是用*吧
+            # ci, qi = self.c * decayc, 0
         else:
+            # ci, qi = self.c, self.q * decayq
             ci, qi = self.c, 0  # 完全没有控制的情况下，隔离率是0
 
         # 计算IAES的移动人口补充数量
@@ -91,9 +97,17 @@ class NetSEAIRQ(InfectiousBase):
         SS_ = -(self.beta*ci+ci*qi*(1-self.beta))*SIAE+self.lam*SSq+SS_out
 
         output = np.r_[HH_, RR_, EE_, AA_, II_, SSq_, EEq_, SS_]
+        if self._needRh:
+            RRh_ = self.gammaH*HH
+            output = np.r_[output, RRh_]
+
         return output
 
-    def predict(self, times):
+    def predict(self, times, return_Rh=False):
+
+        if return_Rh:
+            self.y0 = np.r_[self.y0, np.zeros(self.num_regions)]
+            self._needRh = True
         ALL = super().predict(times)
         HH = ALL[:, :self.num_regions]
         RR = ALL[:, self.num_regions:2*self.num_regions]
@@ -102,7 +116,12 @@ class NetSEAIRQ(InfectiousBase):
         II = ALL[:, 4*self.num_regions:5*self.num_regions]
         SSq = ALL[:, 5*self.num_regions:6*self.num_regions]
         EEq = ALL[:, 6*self.num_regions:7*self.num_regions]
-        SS = ALL[:, 7*self.num_regions:]
+        SS = ALL[:, 7*self.num_regions:8*self.num_regions]
+        if return_Rh:
+            RRh = ALL[:, 8*self.num_regions:]
+            self.y0 = self.y0[:-self.num_regions]
+            self._needRh = False
+            return HH, RR, EE, AA, II, SSq, EEq, SS, RRh
         return HH, RR, EE, AA, II, SSq, EEq, SS
 
     @staticmethod
@@ -134,8 +153,79 @@ class NetSEAIRQ(InfectiousBase):
             diff = diff * mask
         return np.mean(diff)
 
-    def R0(self, ts):
-        raise NotImplementedError
+    def R0s(self, ts, remove_q=False, remove_H=False):
+        Preds = self.predict(np.array(ts))
+        All = 0
+        for pred in Preds:
+            All += pred
+        S = Preds[-1] / All
+        R0s = np.zeros((len(ts), self.num_regions))
+        qi_multiply = 0. if remove_q else 1.
+        H_multiply = 0. if remove_H else 1.
+        for i, t in enumerate(ts):
+            decayc, decayq = self.protect_decay(t, **self.protect_args)
+            ci, qi = self.c * decayc, self.q * decayq  # + 效果不好，还是用*吧
+            qi = qi * qi_multiply
+            phi = self.phi * H_multiply
+            betaC = self.beta * ci
+            part1 = betaC * (1 - qi) / (
+                self.deltaI * phi + self.gammaI * (1 - phi)
+            )
+            part2 = betaC * (1 - self.rho) * (1 - qi) * self.theta / self.gammaA
+            part3 = betaC * self.nu * (1 - qi) / self.sigma
+            R0s[i, :] = (part1 + part2 + part3) * S[i, :]
+        return R0s
+
+    def R0(self, ts, remove_q=False, remove_H=False):
+        Preds = self.predict(np.array(ts))
+        All = 0
+        for pred in Preds:
+            All += pred
+        S = Preds[-1] / All
+        R0s = np.zeros(len(ts))
+        qi_multiply = 0. if remove_q else 1.
+        H_multiply = 0. if remove_H else 1.
+
+        sigma_1_rho_mat = np.diag(
+            np.full(self.num_regions, self.sigma * (1 - self.rho))
+        )
+        sigma_rho_mat = np.diag(
+            np.full(self.num_regions, self.sigma * self.rho)
+        )
+
+        for i, t in enumerate(ts):
+            decayc, decayq = self.protect_decay(t, **self.protect_args)
+            ci, qi = self.c * decayc, self.q * decayq  # + 效果不好，还是用*吧
+            qi = qi * qi_multiply
+            phi = self.phi * H_multiply
+            # 得到一个三项都需要的乘数
+            csq_ = np.diag(ci * (1 - qi) * S[i, :])
+            # 计算M‘
+            M_ = self.PmnFunc(t) - np.diag(np.ones(self.num_regions))
+            M_ = M_.T * self.GammaFunc(t).reshape(1, self.num_regions)
+            # 计算3个逆
+            sigma1M = np.diag(np.full(self.num_regions, self.sigma)) - M_
+            sigma1M_inv = np.linalg.inv(sigma1M)
+            gammaA1M = np.diag(np.full(self.num_regions, self.gammaA)) - M_
+            gammaA1M_inv = np.linalg.inv(gammaA1M)
+            phi_I = phi * self.deltaI + (1 - phi) * self.gammaI
+            phi1M = np.diag(np.full(self.num_regions, phi_I)) - M_
+            phi1M_inv = np.linalg.inv(phi1M)
+            # 计算3部分矩阵
+            mat1 = self.nu * np.matmul(csq_, sigma1M_inv)
+            mat2 = self.theta * np.matmul(csq_, gammaA1M_inv)
+            mat2 = np.matmul(mat2, sigma_1_rho_mat)
+            mat2 = np.matmul(mat2, sigma1M_inv)
+            mat3 = np.matmul(csq_, phi1M_inv)
+            mat3 = np.matmul(mat3, sigma_rho_mat)
+            mat3 = np.matmul(mat3, sigma1M_inv)
+
+            #
+            mat = (mat1 + mat2 + mat3) * self.beta
+            eigs, _ = np.linalg.eig(mat)
+            R0s[i] = np.abs(eigs).max()
+
+        return R0s
 
     @property
     def fit_params_info(self):
@@ -174,6 +264,10 @@ class NetSEAIRQ(InfectiousBase):
         params["nu"] = (1, 0, 10)
         params["protect_args-c_k"] = (31, 0, 1)
         params["protect_args-q_k"] = (31, 0, 1)
+        # params["protect_args-c_k[4]"] = (1, 0, 1)  # 安徽
+        # params["protect_args-c_k[21]"] = (1, 0, 1)  # 吉林
+        # params["protect_args-q_k[4]"] = (1, 0, 1)  # 安徽
+        # params["protect_args-q_k[21]"] = (1, 0, 1)  # 吉林
         return params
 
 
@@ -220,6 +314,7 @@ def main():
     parser.add_argument("--protect_qk", default=0.0, type=float)
     parser.add_argument("--use_19", action="store_true")
     parser.add_argument("--zero_spring", action="store_true")
+    parser.add_argument("--prophetPop", default=None, help="模板结果")
     args = parser.parse_args()  # 对于一些通用的参数，这里已经进行整理了
 
     """ 读取准备好的数据 """
@@ -228,7 +323,7 @@ def main():
 
     """ 构建、或读取、或训练模型 """
     # 根据不同的情况来得到合适的模型
-    if args.model is not None and args.model != "fit":
+    if args.model is not None:
         model = NetSEAIRQ.load(args.model)
     else:
         model = NetSEAIRQ(
@@ -252,60 +347,77 @@ def main():
             gammaI=args.gammaI, gammaA=args.gammaH, gammaH=args.gammaH,
             theta=args.theta, nu=args.nu, phi=args.phi,
         )
-        if args.model == "fit":
-            # 设置我们拟合模型需要的数据
-            if args.use_whhb:
-                mask = None
-            else:
-                mask = np.full(dataset.num_regions, True, dtype=np.bool)
-                mask[0] = False
-            fit_start_index = (dataset.fit_start_t.ord - dataset.epi_t0.ord)
-            fit_start_index = int(fit_start_index)
-            score_kwargs = {
-                "times": dataset.epi_times.delta[fit_start_index:],
-                "mask": mask,
-            }
-            score_kwargs["trueH"] = dataset.trueH
-            # score_kwargs["trueR"] = dataset.trueD + dataset.trueR
-            # 搜索
-            if args.fit_method == "annealing":
-                fit_kwargs = {
-                    "callback": utils.callback, "method": "annealing"
-                }
-            else:
-                fit_kwargs = {
-                    "method": args.fit_method,
-                    "fig_dir": args.save_dir+"/",
-                    "njobs": -1,
-                    "NIND": args.geatpy_nind,
-                    "MAXGEN": args.geatpy_maxgen,
-                    "n_populations": args.geatpy_npop
-                }
-            dim, lb, ub = model.fit_params_range()
-            opt_res = find_best(
-                lambda x: score_func(x, model, score_kwargs),
-                dim, lb, ub, **fit_kwargs
-            )
+    # ah_ind = dataset.regions.index("安徽")
+    # jl_ind = dataset.regions.index("吉林")
+    # import ipdb; ipdb.set_trace()
+    # model.protect_args["c_k"][xj_ind] = 0.75
+    if args.fit:
+        # 设置我们拟合模型需要的数据
+        if args.mask:
+            use_ntime = (
+                (dataset.epi_times - dataset.fit_start_t) >= 0).sum()
+            mask = np.full((use_ntime, dataset.num_regions), True, np.bool)
+            mask[:20, 0] = False  # hb
+            mask[:28, 22] = False  # sd
+        else:
+            mask = None
 
-            # 把拟合得到的参数整理成dataframe，然后保存
-            temp_d, temp_i = {}, 0
-            for i, (k, vs) in enumerate(model.fit_params_info.items()):
-                params_k = opt_res["BestParam"][temp_i:(temp_i+vs[0])]
-                for j, v in enumerate(params_k):
-                    temp_d[k+str(j)] = v
-                temp_i += vs[0]
-            pd.Series(temp_d).to_csv(
-                os.path.join(args.save_dir, "params.csv")
-            )
-            # 将得到的最优参数设置到模型中，并保存
-            model.set_params(opt_res["BestParam"])
-            model.save(os.path.join(args.save_dir, "model.pkl"))
-            utils.save(opt_res, os.path.join(args.save_dir, "opt_res.pkl"))
+        fit_start_index = (dataset.fit_start_t.ord - dataset.epi_t0.ord)
+        fit_start_index = int(fit_start_index)
+        score_kwargs = {
+            "times": dataset.epi_times.delta[fit_start_index:],
+            "mask": mask,
+        }
+        score_kwargs["trueH"] = dataset.trueH
+        # score_kwargs["trueR"] = dataset.trueD + dataset.trueR
+        # 搜索
+        if args.fit_method == "annealing":
+            fit_kwargs = {
+                "callback": utils.callback, "method": "annealing"
+            }
+        else:
+            if args.prophetPop is not None:
+                prophet_opt = utils.load(args.prophetPop)
+                # prophetPop = prophet_opt["population"]
+            else:
+                prophet_opt = None
+            fit_kwargs = {
+                "method": args.fit_method,
+                "fig_dir": args.save_dir+"/",
+                "njobs": -1,
+                "NIND": args.geatpy_nind,
+                "MAXGEN": args.geatpy_maxgen,
+                "n_populations": args.geatpy_npop,
+                "opt_res": prophet_opt
+            }
+        dim, lb, ub = model.fit_params_range()
+        opt_res = find_best(
+            lambda x: score_func(x, model, score_kwargs),
+            dim, lb, ub, **fit_kwargs
+        )
+
+        # 把拟合得到的参数整理成dataframe，然后保存
+        temp_d, temp_i = {}, 0
+        for i, (k, vs) in enumerate(model.fit_params_info.items()):
+            params_k = opt_res["BestParam"][temp_i:(temp_i+vs[0])]
+            for j, v in enumerate(params_k):
+                temp_d[k+str(j)] = v
+            temp_i += vs[0]
+        pd.Series(temp_d).to_csv(
+            os.path.join(args.save_dir, "params.csv")
+        )
+        # 将得到的最优参数设置到模型中，并保存
+        model.set_params(opt_res["BestParam"])
+        utils.save(opt_res, os.path.join(args.save_dir, "opt_res.pkl"))
+    model.save(os.path.join(args.save_dir, "model.pkl"))
 
     # 预测结果
-    prot_preds = model.predict(dataset.pred_times.delta)
+    prot_preds = model.predict(dataset.pred_times.delta, return_Rh=True)
     model.protect = False
-    nopr_preds = model.predict(dataset.pred_times.delta)
+    nopr_preds = model.predict(dataset.pred_times.delta, return_Rh=True)
+    model.protect = True
+    model.lam = 1 / 28
+    prot_preds_28 = model.predict(dataset.pred_times.delta)
 
     """ 计算相关指标以及绘制图像 """
     # 预测R0
@@ -337,20 +449,33 @@ def main():
         """
         plot_one_regions(
             reg, [
+                # ----- 真实疫情发展
                 ("trueH", dataset.epi_times.ord.astype("int"),
                  dataset.trueH[:, i], "ro"),
                 # ("trueR", dataset.epi_times.ord.astype("int"),
                 #  dataset.trueR[:, i]+dataset.trueD[:, i], "bo"),
+                # ----- 预测
                 ("predH", dataset.pred_times.ord.astype("int"),
                  prot_preds[0][:, i], "r"),
                 # ("predR", dataset.pred_times.ord.astype("int"),
                 #  prot_preds[1][:, i], "b"),
-                # ("predE", dataset.pred_times.ord.astype("int"),
-                #  prot_preds[3][:, i], "y"),
-                # ("predA", dataset.pred_times.ord.astype("int"),
-                #  prot_preds[4][:, i], "g"),
-                # ("predI", dataset.pred_times.ord.astype("int"),
-                #  prot_preds[4][:, i], "c"),
+                ("predE", dataset.pred_times.ord.astype("int"),
+                 prot_preds[3][:, i], "y"),
+                ("predA", dataset.pred_times.ord.astype("int"),
+                 prot_preds[4][:, i], "g"),
+                ("predI", dataset.pred_times.ord.astype("int"),
+                 prot_preds[4][:, i], "c"),
+                # ----- 将隔离延长找28天
+                ("predH", dataset.pred_times.ord.astype("int"),
+                 prot_preds_28[0][:, i], "r--"),
+                # ("predR", dataset.pred_times.ord.astype("int"),
+                #  prot_preds_28[1][:, i], "b"),
+                ("predE", dataset.pred_times.ord.astype("int"),
+                 prot_preds_28[3][:, i], "y--"),
+                ("predA", dataset.pred_times.ord.astype("int"),
+                 prot_preds_28[4][:, i], "g--"),
+                ("predI", dataset.pred_times.ord.astype("int"),
+                 prot_preds_28[4][:, i], "c--"),
             ],
             [
                 ("trueH", dataset.epi_times.ord.astype("int"),
@@ -361,34 +486,37 @@ def main():
                  nopr_preds[0][:, i], "r"),
                 # ("predR", dataset.pred_times.ord.astype("int"),
                 #  nopr_preds[1][:, i], "b"),
-                # ("predE", dataset.pred_times.ord.astype("int"),
-                #  nopr_preds[3][:, i], "y"),
-                # ("predA", dataset.pred_times.ord.astype("int"),
-                #  nopr_preds[4][:, i], "g"),
-                # ("predI", dataset.pred_times.ord.astype("int"),
-                #  nopr_preds[4][:, i], "c"),
+                ("predE", dataset.pred_times.ord.astype("int"),
+                 nopr_preds[3][:, i], "y"),
+                ("predA", dataset.pred_times.ord.astype("int"),
+                 nopr_preds[4][:, i], "g"),
+                ("predI", dataset.pred_times.ord.astype("int"),
+                 nopr_preds[4][:, i], "c"),
             ],
             save_dir=img_dir
         )
     # 保存结果
     for i, name in enumerate([
-        "predH", "predR", "predE", "predA", "predI"
+        "predH", "predR", "predE", "predA", "predI",
+        "predSq", "predEq", "predS", "predRh"
     ]):
         pd.DataFrame(
             prot_preds[i],
             columns=dataset.regions,
             index=dataset.pred_times.str
         ).to_csv(
-            os.path.join(args.save_dir, "protect_%s.csv" % name)
+            os.path.join(args.save_dir, "protect_%s.csv" % name),
+            encoding="utf_8_sig"
         )
         pd.DataFrame(
             nopr_preds[i],
             columns=dataset.regions,
             index=dataset.pred_times.str
         ).to_csv(
-            os.path.join(args.save_dir, "noprotect_%s.csv" % name)
+            os.path.join(args.save_dir, "noprotect_%s.csv" % name),
+            encoding="utf_8_sig"
         )
-    auc_df.to_csv(os.path.join(args.save_dir, "auc.csv"))
+    auc_df.to_csv(os.path.join(args.save_dir, "auc.csv"), encoding="utf_8_sig")
     # 这里保存的是原始数据
     for i, attr_name in enumerate(["trueD", "trueH", "trueR"]):
         save_arr = getattr(dataset, attr_name)
@@ -396,7 +524,8 @@ def main():
             save_arr,
             columns=dataset.regions,
             index=dataset.epi_times.str
-        ).to_csv(os.path.join(args.save_dir, "%s.csv" % attr_name))
+        ).to_csv(os.path.join(args.save_dir, "%s.csv" % attr_name),
+                 encoding="utf_8_sig")
     # 保存args到路径中（所有事情都完成再保存数据，安全）
     save_args = deepcopy(args.__dict__)
     save_args["model_type"] = "NetSEAIRQ"

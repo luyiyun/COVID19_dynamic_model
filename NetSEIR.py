@@ -216,7 +216,7 @@ def main():
 
     """ 构建、或读取、或训练模型 """
     # 根据不同的情况来得到合适的模型
-    if args.model is not None and args.model != "fit":
+    if args.model is not None:
         model = NetSEIR.load(args.model)
     else:
         model = NetSEIR(
@@ -234,54 +234,54 @@ def main():
             },
             Pmn_func_kwargs={"pmn": dataset.pmn_matrix_relative}
         )
-        if args.model == "fit":
-            # 设置我们拟合模型需要的数据
-            if args.use_whhb:
-                mask = None
-            else:
-                mask = np.full(dataset.num_regions, True, dtype=np.bool)
-                mask[0] = False
-            fit_start_index = (dataset.fit_start_t.ord - dataset.epi_t0.ord)
-            fit_start_index = int(fit_start_index)
-            score_kwargs = {
-                "times": dataset.epi_times.delta[fit_start_index:],
-                "true_infects": dataset.trueH[fit_start_index:, :],
-                "mask": mask,
+    if args.fit:
+        # 设置我们拟合模型需要的数据
+        if args.use_whhb:
+            mask = None
+        else:
+            mask = np.full(dataset.num_regions, True, dtype=np.bool)
+            mask[0] = False
+        fit_start_index = (dataset.fit_start_t.ord - dataset.epi_t0.ord)
+        fit_start_index = int(fit_start_index)
+        score_kwargs = {
+            "times": dataset.epi_times.delta[fit_start_index:],
+            "true_infects": dataset.trueH[fit_start_index:, :],
+            "mask": mask,
+        }
+        # 搜索
+        if args.fit_method == "annealing":
+            fit_kwargs = {
+                "callback": utils.callback, "method": "annealing"
             }
-            # 搜索
-            if args.fit_method == "annealing":
-                fit_kwargs = {
-                    "callback": utils.callback, "method": "annealing"
-                }
-            else:
-                fit_kwargs = {
-                    "method": "SEGA",
-                    "fig_dir": args.save_dir+"/",
-                    "njobs": -1,
-                    "NIND": args.geatpy_nind,
-                    "MAXGEN": args.geatpy_maxgen,
-                    "n_populations": args.geatpy_npop
-                }
-            dim, lb, ub = model.fit_params_range()
-            opt_res = find_best(
-                lambda x: score_func(x, model, score_kwargs),
-                dim, lb, ub, **fit_kwargs
-            )
+        else:
+            fit_kwargs = {
+                "method": "SEGA",
+                "fig_dir": args.save_dir+"/",
+                "njobs": -1,
+                "NIND": args.geatpy_nind,
+                "MAXGEN": args.geatpy_maxgen,
+                "n_populations": args.geatpy_npop
+            }
+        dim, lb, ub = model.fit_params_range()
+        opt_res = find_best(
+            lambda x: score_func(x, model, score_kwargs),
+            dim, lb, ub, **fit_kwargs
+        )
 
-            # 把拟合得到的参数整理成dataframe，然后保存
-            temp_d, temp_i = {}, 0
-            for i, (k, vs) in enumerate(model.fit_params_info.items()):
-                params_k = opt_res["BestParam"][temp_i:(temp_i+vs[0])]
-                for j, v in enumerate(params_k):
-                    temp_d[k+str(j)] = v
-                temp_i += vs[0]
-            pd.Series(temp_d).to_csv(
-                os.path.join(args.save_dir, "params.csv")
-            )
-            # 将得到的最优参数设置到模型中，并保存
-            model.set_params(opt_res["BestParam"])
-            model.save(os.path.join(args.save_dir, "model.pkl"))
-            utils.save(opt_res, os.path.join(args.save_dir, "opt_res.pkl"))
+        # 把拟合得到的参数整理成dataframe，然后保存
+        temp_d, temp_i = {}, 0
+        for i, (k, vs) in enumerate(model.fit_params_info.items()):
+            params_k = opt_res["BestParam"][temp_i:(temp_i+vs[0])]
+            for j, v in enumerate(params_k):
+                temp_d[k+str(j)] = v
+            temp_i += vs[0]
+        pd.Series(temp_d).to_csv(
+            os.path.join(args.save_dir, "params.csv")
+        )
+        # 将得到的最优参数设置到模型中，并保存
+        model.set_params(opt_res["BestParam"])
+        model.save(os.path.join(args.save_dir, "model.pkl"))
+        utils.save(opt_res, os.path.join(args.save_dir, "opt_res.pkl"))
 
     # 预测结果
     prot_preds = model.predict(dataset.pred_times.delta)

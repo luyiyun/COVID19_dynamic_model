@@ -38,6 +38,20 @@ def df_to_mat(df, shape, source="source", target="target", values="value"):
     return np.array(smat.todense())  # np.array将matrix变成array，不然ode会出错
 
 
+def correct(arr, ill_ind, period=None):
+    if period is not None:
+        t1 = ill_ind - period
+    else:
+        t1 = 0
+    arr_part = arr[t1:ill_ind]
+    arr_part = arr_part / arr_part.sum()
+    add_value = arr_part * (arr[ill_ind] - arr[ill_ind-1])
+    arr_part = arr_part + add_value
+    res = arr.copy()
+    res[t1:ill_ind] = res[t1:ill_ind] + arr_part
+    return res
+
+
 def save(obj, filename, type="pkl"):
     if type == "pkl":
         with open(filename, "wb") as f:
@@ -522,10 +536,13 @@ class MyArguments(ArgumentParser):
         # self.add_argument("--region_type", default="province",
         #                   choices=("city", "province"))
         self.add_argument(
+            "--fit", action="store_true",
+            help="如果使用此参数，则会使用遗传算法寻找参数"
+        )
+        self.add_argument(
             "--model", default=None,
             help=("默认是None，即不使用训练的模型，而是直接使用命令行赋予的参数, "
-                  "不然则读取拟合的参数，命令行赋予的参数无效, 如果是fit，"
-                  "则取进行自动的拟合")
+                  "不然则读取拟合的参数，命令行赋予的参数无效")
         )
         self.add_argument("--t0", default="2019-12-01", help="疫情开始的那天")
         self.add_argument("--y0", default=1, type=float,
@@ -534,7 +551,7 @@ class MyArguments(ArgumentParser):
         self.add_argument("--fit_score", default="nll",
                           choices=["nll", "mse", "mae"])
         self.add_argument("--fit_time_start", default="2020-02-01")
-        self.add_argument("--use_whhb", action="store_true")
+        self.add_argument("--mask", action="store_true")
         self.add_argument("--fit_method", default="SEGA",
                           choices=[
                               "SEGA", "multiSEGA", "psySEGA", "annealing",
@@ -599,6 +616,12 @@ class Dataset:
         self.trueH, self.trueR, self.trueD = dats["trueH"], dats["trueR"], \
             dats["trueD"]
         self.num_regions = len(self.regions)
+
+        # 这里对山东和湖北的数据进行一下修正
+        # hb_ind, sd_ind = 0, self.regions.index("山东")
+        # import ipdb; ipdb.set_trace()
+        # self.trueH[:, hb_ind] = correct(self.trueH[:, hb_ind], 20, 12)
+        # self.trueH[:, sd_ind] = correct(self.trueH[:, sd_ind], 26, 12)
 
 
 if __name__ == "__main__":

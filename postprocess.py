@@ -26,6 +26,7 @@ def main():
         "./DATA/Provinces.pkl", args["t0"], args["tm"],
         args["fit_time_start"]
     )
+    plt.rcParams["font.sans-serif"] = ["SimHei"]
 
     if args["model_type"] == "NetSEIR":
         # 1. 整理params.csv
@@ -39,9 +40,11 @@ def main():
             model.protect_args["k"]
         ]
         new_params = pd.Series(new_values, index=new_index)
-        new_params.to_csv(osp.join(root_dir, "params_clear.csv"))
+        new_params.to_csv(osp.join(root_dir, "params_clear.csv"),
+                          encoding="utf_8_sig")
 
         # 2. 计算R0
+        # 普通R0
         r0 = model.R0(dataset.pred_times.delta)
         r0_prot = model.R0(dataset.pred_times.delta, protect=True)
         r0_relative = model.R0(dataset.pred_times.delta, relative=True)
@@ -84,17 +87,86 @@ def main():
         new_values += list(model.protect_args["c_k"])
         new_values += list(model.protect_args["q_k"])
         new_params = pd.Series(new_values, index=new_index)
-        new_params.to_csv(osp.join(root_dir, "params_clear.csv"))
+        new_params.to_csv(osp.join(root_dir, "params_clear.csv"),
+                          encoding="utf_8_sig")
+
+        # 2. 计算R0s
+        r0s = model.R0s(dataset.pred_times.delta)
+        np.savetxt(osp.join(root_dir, "R0s_H.txt"), r0s)
+        fig, axs = plt.subplots(figsize=(7, 5))
+        axs.plot(r0s)
+        axs.legend(dataset.regions, ncol=2)
+        fig.savefig(osp.join(root_dir, "R0s_H.png"))
+
+        # 3. 计算去除隔离、医院舱室后的R0
+        r0s = model.R0s(
+            dataset.pred_times.delta, remove_H=True, remove_q=True)
+        np.savetxt(osp.join(root_dir, "R0s_noH.txt"), r0s)
+        fig, axs = plt.subplots(figsize=(7, 5))
+        axs.plot(r0s)
+        axs.legend(dataset.regions, ncol=2)
+        fig.savefig(osp.join(root_dir, "R0s_noH.png"))
+
+        # 4. 计算R0
+        r0 = model.R0(dataset.pred_times.delta)
+        np.savetxt(osp.join(root_dir, "R0_H.txt"), r0)
+        fig, axs = plt.subplots(figsize=(7, 5))
+        axs.plot(r0)
+        # axs.legend(dataset.regions, ncol=2)
+        fig.savefig(osp.join(root_dir, "R0_H.png"))
+
+        # 5. 计算去除隔离、医院舱室后的R0
+        r0 = model.R0(dataset.pred_times.delta, remove_H=True, remove_q=True)
+        np.savetxt(osp.join(root_dir, "R0_noH.txt"), r0)
+        fig, axs = plt.subplots(figsize=(7, 5))
+        axs.plot(r0)
+        # axs.legend(dataset.regions, ncol=2)
+        fig.savefig(osp.join(root_dir, "R0_noH.png"))
+
+        # ============= 使用19年的数据R0 ===================
+        model.gamma_func_kwargs["gammas"] = dataset.out19_dict
+        # 计算R0s
+        r0s = model.R0s(dataset.pred_times.delta)
+        np.savetxt(osp.join(root_dir, "R0s_H_19.txt"), r0s)
+        fig, axs = plt.subplots(figsize=(7, 5))
+        axs.plot(r0s)
+        axs.legend(dataset.regions, ncol=2)
+        fig.savefig(osp.join(root_dir, "R0s_H_19.png"))
+
+        # 3. 计算去除隔离、医院舱室后的R0
+        r0s = model.R0s(
+            dataset.pred_times.delta, remove_H=True, remove_q=True)
+        np.savetxt(osp.join(root_dir, "R0s_noH_19.txt"), r0s)
+        fig, axs = plt.subplots(figsize=(7, 5))
+        axs.plot(r0s)
+        axs.legend(dataset.regions, ncol=2)
+        fig.savefig(osp.join(root_dir, "R0s_noH_19.png"))
+
+        # 4. 计算R0
+        r0 = model.R0(dataset.pred_times.delta)
+        np.savetxt(osp.join(root_dir, "R0_H_19.txt"), r0)
+        fig, axs = plt.subplots(figsize=(7, 5))
+        axs.plot(r0)
+        # axs.legend(dataset.regions, ncol=2)
+        fig.savefig(osp.join(root_dir, "R0_H_19.png"))
+
+        # 5. 计算去除隔离、医院舱室后的R0
+        r0 = model.R0(dataset.pred_times.delta, remove_H=True, remove_q=True)
+        np.savetxt(osp.join(root_dir, "R0_noH_19.txt"), r0)
+        fig, axs = plt.subplots(figsize=(7, 5))
+        axs.plot(r0)
+        # axs.legend(dataset.regions, ncol=2)
+        fig.savefig(osp.join(root_dir, "R0_noH_19.png"))
 
     # 3. 绘制 obj trace的log 尺度图
-    opt_res = load(osp.join(root_dir, "opt_res.pkl"), "pkl")
-    ObjTrace = opt_res["ObjTrace"]
+    # opt_res = load(osp.join(root_dir, "opt_res.pkl"), "pkl")
+    # ObjTrace = opt_res["ObjTrace"]
     # import ipdb; ipdb.set_trace()
     # ObjTrace = np.log(ObjTrace)
-    fig, ax = plt.subplots()
-    ax.plot(ObjTrace)
-    ax.set_yscale("log")
-    fig.savefig(osp.join(root_dir, "LogObjTrace.png"))
+    # fig, ax = plt.subplots()
+    # ax.plot(ObjTrace)
+    # ax.set_yscale("log")
+    # fig.savefig(osp.join(root_dir, "LogObjTrace.png"))
 
 
 if __name__ == "__main__":

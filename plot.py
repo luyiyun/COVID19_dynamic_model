@@ -35,8 +35,8 @@ def under_area(true_times, true_values, pred_times, pred_values):
         raise ValueError
     true_areas, pred_areas, diff_areas = [], [], []
     for i in range(num_regions):
-        true_area = trapz(comm_times, true_values[comm1, i])
-        pred_area = trapz(comm_times, pred_values[comm2, i])
+        true_area = trapz(true_values[comm1, i])
+        pred_area = trapz(pred_values[comm2, i])
         true_areas.append(true_area)
         pred_areas.append(pred_area)
         diff_areas.append(pred_area - true_area)

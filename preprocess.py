@@ -11,14 +11,16 @@ import utils
 
 FILES = {
     "Prov": {
-        "pmn_dir": "./DATA/Original/Provinces/",
-        "epidemic_file": "./DATA/Original/DXYArea0227.csv",
+        "pmn_dir": "./DATA/Original/Provinces0420/",
+        "epidemic_file": "./DATA/Original/clean0421.csv",
         "population_file": "./DATA/Original/Provinces_population18.csv",
         "response_time_file": "./DATA/Original/ResponseTimeProvince.csv",
         "first_case_file": "./DATA/Original/FirstProvince.csv",
-        "out_trend_file": "./DATA/Original/out_trend.csv"
+        "out_trend_file": "./DATA/Original/out_trend0422.csv"
     }
 }
+
+END_TIME = "2020-03-03"
 
 
 def city_remove_end(cities):
@@ -273,7 +275,12 @@ def preprocess_provinces_epidemic():
     #   将出现疫情最早的那一天看做t0，并将时间进行整理，全部转换成ordinal格式
     epidemic_dat.loc[:, "time"] = epidemic_dat.time.map(
         lambda x: parse(x).toordinal())
-    return epidemic_dat.loc[:, ["region", "time", "trueH", "trueR", "trueD"]]
+
+    # END_TIME之后，疫情的增长主要受到外部输入的影响，这里我们不去考虑
+    end_time = parse(END_TIME).toordinal()
+    use_indice = epidemic_dat.loc[:, "time"] <= end_time
+    return epidemic_dat.loc[
+        use_indice, ["region", "time", "trueH", "trueR", "trueD"]]
 
 
 def preprocess_provinces_population():
